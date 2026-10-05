@@ -1,0 +1,9 @@
+* text=auto
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.png binary
+*.tif binary
+*.tiff binary
+*.nc binary
+*.qgz binary
+*.zip binary

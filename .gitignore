@@ -1,0 +1,25 @@
+# ---- 数据与产物：全部可由 spec+指纹重生成，不进版本库 ----
+data/
+
+# ---- 开发文档与 comet 产物：个人文档，本地维护 ----
+/docs/
+
+# ---- 第三方参考快照（GeoCode-Release v0.9.6 + zip）----
+_src/
+
+# ---- 运行态与日志（保留验收证据图）----
+logs/*
+!logs/qgis_render.png
+.cache/daemon.json
+
+# ---- Python ----
+__pycache__/
+*.pyc
+
+# ---- Windows 临时文件（本项目约定：临时文件为同目录 .part）----
+*.part
+Thumbs.db
+desktop.ini
+
+# ---- IDE ----
+.idea/

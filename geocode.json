@@ -1,0 +1,15 @@
+{
+  "gee": {
+    "project": "YOUR_GEE_PROJECT",
+    "credentials": "",
+    "proxy": "http://127.0.0.1:7897",
+    "use_proxy": true
+  },
+  "gdal": {
+    "bin_dir": ""
+  },
+  "server": {
+    "host": "127.0.0.1",
+    "port": 6531
+  }
+}
