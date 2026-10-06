@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import queue
 import threading
@@ -26,12 +27,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import urlparse
 
-from . import geoenv, preflight
+from . import export as _export
+from . import geoenv, jobstore, preflight
 from .jobs import (
+    Jobs,
     KIND_DEFAULTS,
     KIND_DESCRIBE,
     KIND_EMIT,
-    Jobs,
+    KIND_EXPORT,
     run_defaults,
     run_describe,
     run_emit,
@@ -68,6 +71,19 @@ def _broadcast(event: str, payload: dict) -> None:
 
 
 JOBS.subscribe(_broadcast)
+
+
+def _persist_export_jobs(event: str, payload: dict) -> None:
+    """export 任务的事件 → 持久化（D7：提交后 / 每次状态变化 / 终态都过这里）。"""
+    if payload.get("kind") != KIND_EXPORT:
+        return
+    try:
+        jobstore.save_from(JOBS)
+    except Exception:
+        pass  # 持久化失败不阻塞任务执行 —— 下一个事件会再试
+
+
+JOBS.subscribe(_persist_export_jobs)
 
 
 # ---------------------------------------------------------------------------
@@ -145,16 +161,28 @@ def act_job_submit(body: dict) -> dict:
                 f"emit 任务必须指定 exit，可选：{', '.join(EXITS)}。收到 {exit_!r}"
             )
         spec.validate(exit_)
+    elif kind == KIND_EXPORT:
+        if exit_ is not None:
+            raise SpecError(
+                "export 任务不需要 exit —— 产物去向是 Google Drive 的 "
+                "folder 文件夹（默认 gexports，D10/D11）。要用本地下载体请用 kind=emit。"
+            )
+        _export.validate_export_spec(spec)
+        _export.submit_params(body)     # 参数校验前移：提交前快速失败（422）
     elif kind in (KIND_DESCRIBE, KIND_DEFAULTS):
         if not spec.asset:
             raise SpecError(f"{kind} 任务需要 spec.asset。")
     else:
-        raise SpecError(f"未知任务类型 {kind!r}。可选：{KIND_EMIT}, {KIND_DESCRIBE}, {KIND_DEFAULTS}")
+        raise SpecError(
+            f"未知任务类型 {kind!r}。可选：{KIND_EMIT}, {KIND_EXPORT}, {KIND_DESCRIBE}, {KIND_DEFAULTS}"
+        )
 
     with STATE_LOCK:
         CURRENT_SPEC = spec
 
-    fn = {KIND_EMIT: run_emit, KIND_DESCRIBE: run_describe, KIND_DEFAULTS: run_defaults}[kind]
+    fn = {KIND_EMIT: run_emit, KIND_DESCRIBE: run_describe, KIND_DEFAULTS: run_defaults}.get(kind)
+    if kind == KIND_EXPORT:
+        fn = functools.partial(_export.run_export, **_export.submit_params(body))
     renderer = body.get("renderer")
     if renderer is not None and kind == KIND_EMIT and exit_ == "map":
         if renderer not in ("qgis", "arcpy"):
@@ -178,10 +206,22 @@ def act_job_get(job_id: str) -> dict:
 
 
 def act_job_cancel(job_id: str) -> dict:
+    j = JOBS.get(job_id)
     ok = JOBS.cancel(job_id)
     if not ok:
         raise KeyError(f"任务不存在或已结束：{job_id}")
-    return {"cancelled": job_id}
+    # export 任务联动 GEE 侧取消（D5）：否则"取消"只是本地不再追踪，
+    # 服务端任务照跑白烧配额。失败不回滚本地取消，如实记录提醒人工核对。
+    gee_cancelled = None
+    if j is not None and _export.should_cancel_gee(j):
+        gee_cancelled = _export.cancel_gee_task(j.task_id)
+        if not gee_cancelled:
+            j.warning = (
+                "GEE task.cancel() 调用失败（网络/认证？）——本地已取消，"
+                "服务端任务可能仍在跑，请到 GEE 控制台核对。"
+            )
+            JOBS.emit("job.updated", j.to_dict())
+    return {"cancelled": job_id, "gee_cancelled": gee_cancelled}
 
 
 def act_gee_describe(asset: str) -> dict:
@@ -192,6 +232,59 @@ def act_gee_describe(asset: str) -> dict:
 def act_gee_defaults(asset: str, aoi: dict | None = None) -> dict:
     from . import source
     return source.defaults_for(asset, aoi)
+
+
+# ---------------------------------------------------------------------------
+# export 任务的后台轮询与重启恢复（C5：D7）
+# ---------------------------------------------------------------------------
+
+def _restore_jobs() -> int:
+    """daemon 启动时把持久化的 export 任务登记回注册表。返回恢复数。"""
+    n = 0
+    for rec in jobstore.load().values():
+        if rec.get("kind") != KIND_EXPORT:      # 防御：文件里只应有 export
+            continue
+        JOBS.adopt(jobstore.restore(rec))
+        n += 1
+    return n
+
+
+def _poll_tick() -> int:
+    """
+    查一轮"无线程驱动"的 export 任务（daemon 重启恢复的那些；有线程的
+    任务由自己的轮询循环推进）。GEE 查询失败如实记录、不误标终态。
+    """
+    n = 0
+    for j in JOBS.list(limit=1000):
+        if j.kind != KIND_EXPORT or j.is_terminal or j.thread_alive:
+            continue
+        n += 1
+        try:
+            r = _export.query_task(j)
+        except Exception as e:
+            _export.note_poll_failure(j, e)
+            JOBS.emit("job.updated", j.to_dict())
+            continue
+        _export.reset_poll_failure(j)
+        _export.apply_progress(j, r)
+        if r["terminal"]:
+            _export.finalize(j, r)
+            JOBS.emit("job.finished", j.to_dict(include_result=True))
+        else:
+            JOBS.emit("job.updated", j.to_dict())
+    return n
+
+
+def _start_poller(interval: float | None = None) -> None:
+    def loop() -> None:
+        while True:
+            time.sleep(interval or _export.POLL_INTERVAL)
+            try:
+                _poll_tick()
+            except Exception:
+                pass  # 轮询线程永远不该死
+
+    threading.Thread(target=loop, name="export-poller", daemon=True).start()
 
 
 # ---------------------------------------------------------------------------
@@ -248,15 +341,30 @@ MCP_TOOLS: list[dict] = [
     },
     {
         "name": "job_submit",
-        "description": "提交任务。kind=emit 时物化产物（exit: array|file|map）；"
+        "description": "提交任务。kind=emit 时物化产物（exit: array|file|map，同步）；"
+                       "kind=export 提交 GEE 服务端批处理导出（toDrive，支持 >64M 像素，"
+                       "异步长任务，产物落 Google Drive 的 folder 文件夹，默认 gexports）；"
                        "kind=describe 探测资产；kind=defaults 推导默认值。",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "kind": {"type": "string", "enum": ["emit", "describe", "defaults"], "default": "emit"},
-                "exit": {"type": "string", "enum": list(EXITS)},
+                "kind": {"type": "string",
+                         "enum": ["emit", "describe", "defaults", "export"], "default": "emit"},
+                "exit": {"type": "string", "enum": list(EXITS),
+                         "description": "仅 kind=emit 需要"},
                 "renderer": {"type": "string", "enum": ["qgis", "arcpy"],
                              "description": "仅 exit=map 有效：qgis（默认，.qgz+PNG）/ arcpy（.aprx+PDF/PNG 出版级）"},
+                "folder": {"type": "string",
+                           "description": "仅 kind=export：Google Drive 目标文件夹名（不存在时由 GEE 创建），默认 gexports"},
+                "file_prefix": {"type": "string",
+                                "description": "仅 kind=export：文件名前缀，默认 {spec.slug}.{指纹8位}"},
+                "file_format": {"type": "string", "enum": ["GeoTIFF", "TFRecord"],
+                                "description": "仅 kind=export，默认 GeoTIFF"},
+                "shard_size": {"type": "integer",
+                               "description": "仅 kind=export：分片尺寸（像素），缺省由 GEE 自动"},
+                "file_dimensions": {"description": "仅 kind=export：单文件尺寸，正整数或正整数列表"},
+                "max_pixels": {"type": "integer",
+                               "description": "仅 kind=export：maxPixels，默认按网格估算+余量"},
                 "spec": {"type": "object", "description": "不传则用当前 spec"},
             },
             "required": [],
@@ -588,9 +696,13 @@ def main(argv: list[str] | None = None) -> int:
 
     httpd = serve(host, port)
     daemonize_file()
+    restored = _restore_jobs()
+    _start_poller()
     print(f"{SERVER_NAME} {SERVER_VERSION} 监听 http://{host}:{port}")
     print(f"  MCP : http://{host}:{port}/mcp")
     print(f"  SSE : http://{host}:{port}/events")
+    if restored:
+        print(f"  已恢复 {restored} 个 export 任务（继续向 GEE 追踪）")
     print("  Ctrl-C 停止")
     try:
         httpd.serve_forever()
