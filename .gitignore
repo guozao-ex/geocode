@@ -12,6 +12,8 @@ _src/
 logs/*
 !logs/qgis_render.png
 .cache/daemon.json
+.cache/jobs.json
+.cache/jobs.json.part
 
 # ---- Python ----
 __pycache__/

@@ -37,6 +37,7 @@ TERMINAL = {DONE, FAILED, CANCELLED}
 KIND_DESCRIBE = "describe"     # 探测 GEE 资产
 KIND_DEFAULTS = "defaults"     # 推导 spec 默认值
 KIND_EMIT = "emit"             # 物化（三出口）
+KIND_EXPORT = "export"         # GEE 服务端批处理导出（C5，状态由 GEE task 驱动）
 
 
 # ---------------------------------------------------------------------------
@@ -51,6 +52,7 @@ class Job:
     spec: ArtifactSpec | None = None
     exit: Exit | None = None
     renderer: str | None = None     # map 出口专用：qgis（默认）/ arcpy
+    task_id: str | None = None      # export 专用：GEE 服务端 task id（重启恢复的锚点）
 
     phase: str = ""
     pct: float = 0.0
@@ -82,6 +84,11 @@ class Job:
     def cancel_requested(self) -> bool:
         return self._cancel.is_set()
 
+    @property
+    def thread_alive(self) -> bool:
+        """执行线程还活着吗。export 的恢复路径用它判断状态由谁驱动。"""
+        return self._thread is not None and self._thread.is_alive()
+
     def request_cancel(self) -> bool:
         if self.is_terminal:
             return False
@@ -100,6 +107,7 @@ class Job:
             "status": self.status,
             "exit": self.exit,
             "renderer": self.renderer,
+            "task_id": self.task_id,
             "phase": self.phase,
             "pct": round(self.pct, 1),
             "message": self.message,
@@ -283,6 +291,20 @@ class Jobs:
             if deadline is not None and time.time() > deadline:
                 return job
             time.sleep(poll)
+
+    # --- 恢复与外部驱动（export 持久化用，C5）--------------------------
+
+    def adopt(self, job: Job) -> None:
+        """把恢复出来的历史任务直接登记进注册表（不启动线程）。"""
+        with self._lock:
+            self._jobs[job.id] = job
+            self._order.append(job.id)
+            self._trim()
+        self._emit("job.created", job.to_dict())
+
+    def emit(self, event: str, payload: dict) -> None:
+        """外部驱动者（daemon 的 export 轮询）推状态变化用的事件出口。"""
+        self._emit(event, payload)
 
 
 def bind_progress(job: Job, emit: Callable[[str, dict], None]) -> None:
