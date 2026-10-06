@@ -16,7 +16,7 @@ import threading
 import time
 import traceback
 import uuid
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from .spec import ArtifactSpec, Exit
@@ -43,6 +43,10 @@ KIND_EMIT = "emit"             # 物化（三出口）
 # Job
 # ---------------------------------------------------------------------------
 
+def _noop(*_args: Any, **_kwargs: Any) -> None:
+    """progress 的占位实现：绑定 bind_progress() 之前调用它不会炸。"""
+
+
 @dataclass
 class Job:
     id: str
@@ -68,6 +72,8 @@ class Job:
     # 运行时（不进 JSON）
     _cancel: threading.Event = field(default_factory=threading.Event, repr=False)
     _thread: threading.Thread | None = field(default=None, repr=False)
+    # 由 bind_progress() 在运行时替换；此处给个空实现兜底
+    progress: Callable[..., None] = field(default=_noop, repr=False, compare=False)
 
     @property
     def elapsed(self) -> float:
@@ -132,6 +138,9 @@ Subscriber = Callable[[str, dict], None]   # (event_name, payload)
 
 class Jobs:
     """任务注册表 + 执行器。线程安全。"""
+
+    _lock: threading.RLock
+    _max_history: int
 
     def __init__(self, max_history: int = 200) -> None:
         self._lock = threading.RLock()
@@ -308,7 +317,7 @@ def bind_progress(job: Job, emit: Callable[[str, dict], None]) -> None:
                 payload["extra"] = extra
             emit("job.updated", payload)
 
-    job.progress = progress  # type: ignore[attr-defined]
+    job.progress = progress
 
 
 def _format_exc(e: BaseException) -> str:

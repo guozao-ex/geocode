@@ -1,4 +1,4 @@
-"""指纹行为与向后兼容守卫（A3 / A4）。
+"""指纹行为与向后兼容守卫（C1 A3/A4 延续 + C3 A5/A6）。
 
 对应 docs/README.md §3.3 与红线 3 / 8：
 - 指纹 = 决定输出因素的白名单哈希 + PROCESSING_VERSION
@@ -10,21 +10,30 @@ import dataclasses
 import unittest
 from unittest import mock
 
-from _helpers import make_spec
+from _helpers import make_p0_spec, make_spec
+
 from gis import spec as spec_module
 from gis.spec import PROCESSING_VERSION, ArtifactSpec, LayoutSpec
 
 # ★ 守卫名单：给 ArtifactSpec 新增字段时，必须把新字段挪进其中一组。
 # 白名单 = 决定像素输出的字段（参与哈希）；排除名单 = 不影响像素值的字段。
-# 注意 nodata：当前 spec.fingerprint() 的 payload 显式排除它（与 id/note/tags/render
-# 同类）。若未来认定 nodata 影响像素输出，需按红线 8 把它移入白名单——那是一次
-# 契约变更，须评估对历史缓存指纹的影响。
+# 注意 nodata（D5 议题，2026-10-06 C3 结案）：维持排除 —— 调查确认
+# spec.nodata 在计算与出口全链路零消费（仅出现在 spec.to_dict 序列化与
+# emit 的元信息报告），不影响像素值；若未来要按 nodata 烧写填充值再移入
+# 白名单，需评估设值 spec 的历史缓存失效面。
 # layout（2026-10-06，C2）：呈现层规格（图廓/比例尺/图例等），与 render 同类，排除。
+# time_step / time_ranges（2026-10-06，C3）：决定期窗口 → 决定像素输出，入白名单；
+# 缺省时在 fingerprint() payload 中整个键缺席 → 旧 spec 指纹不变（金指纹锚定）。
 FINGERPRINT_FIELDS = {
     "asset", "band_expr", "crs", "scale", "aoi",
     "dtype", "bands", "time_range", "reducer",
+    "time_step", "time_ranges",
 }
 EXCLUDED_FIELDS = {"id", "note", "tags", "render", "nodata", "layout"}
+
+# P0 样本 spec 的指纹金值（data/derived/ 既有缓存 c9243efd 的完整指纹）。
+# 新增字段若意外参与旧 spec 哈希，此断言首先失败。
+P0_GOLDEN_FINGERPRINT = "c9243efd40318c85"
 
 
 class FingerprintStabilityTest(unittest.TestCase):
@@ -68,10 +77,37 @@ class FingerprintStabilityTest(unittest.TestCase):
             "bands": make_spec(bands=("B8",)),
             "time_range": make_spec(time_range=("2023-01-01", "2023-12-31")),
             "reducer": make_spec(reducer="mean"),
+            "time_step": make_spec(time_step="month"),
+            "time_ranges": make_spec(time_ranges=(("2024-01-01", "2024-03-31"),)),
         }
         for name, v in variants.items():
             with self.subTest(field=name):
                 self.assertNotEqual(v.fingerprint(), base)
+
+
+class GoldenFingerprintTest(unittest.TestCase):
+    """C3 A5：旧 spec 指纹不变 —— 金指纹锚定 P0 缓存产物。"""
+
+    def test_p0_golden_fingerprint_unchanged(self):
+        # P0 样本参数（tests/smoke_emit.py 原样）→ 既有缓存 s2_beijing_test.c9243efd.*
+        # 任一新字段意外参与缺省 spec 的哈希，这里首先红。
+        self.assertEqual(make_p0_spec().fingerprint(), P0_GOLDEN_FINGERPRINT)
+
+    def test_timeseries_fields_absent_by_default(self):
+        # 缺省（None）的时序字段不得改变指纹 —— 与金指纹互为表里的显式断言
+        base = make_p0_spec().fingerprint()
+        self.assertEqual(
+            make_p0_spec(time_step=None, time_ranges=None).fingerprint(), base
+        )
+
+    def test_timeseries_fields_change_fingerprint(self):
+        base = make_p0_spec().fingerprint()
+        self.assertNotEqual(
+            make_p0_spec(time_step="month").fingerprint(), base
+        )
+        self.assertNotEqual(
+            make_p0_spec(time_ranges=(("2024-06-01", "2024-07-01"),)).fingerprint(), base
+        )
 
 
 class FingerprintForwardCompatGuardTest(unittest.TestCase):

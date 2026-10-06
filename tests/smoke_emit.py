@@ -1,4 +1,7 @@
-import io, sys, time
+import io
+import sys
+import time
+
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 from gis.client import Client
 

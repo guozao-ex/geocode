@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import importlib
 import json
-import socket
 import ssl
 import sys
 import urllib.error

@@ -3,10 +3,10 @@
 对应 brief 交付内容 1（validate 出口必填项）与 2（基础行为）。
 """
 
-import json
 import unittest
 
 from _helpers import BEIJING_AOI, make_spec
+
 from gis.spec import (
     EXITS,
     ArtifactSpec,

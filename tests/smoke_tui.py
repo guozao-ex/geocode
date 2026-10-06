@@ -1,5 +1,10 @@
-import asyncio, json, re, pathlib
-from textual.widgets import Static, DataTable
+import asyncio
+import json
+import pathlib
+import re
+
+from textual.widgets import DataTable, Static
+
 from gis.tui import GeoCodeTUI
 
 # 期望的 GEE 项目从配置读 —— 真实 id 只存在于本地 geocode.json，不入库
@@ -36,7 +41,12 @@ async def main():
         sb = txt(app.query_one("#spec-body", Static))
         checks.append(("spec 被填充", "COPERNICUS" in sb, sb.replace("\n", " | ")[:160]))
         n_after = app.query_one("#jobs", DataTable).row_count
-        checks.append(("产生新任务", n_after > n_before, f"{n_before} → {n_after}"))
+        # describe 走同步 RPC（gee.describe），按设计不产生任务行：
+        #   client.py describe_asset → daemon /rpc act_gee_describe 直调 source.describe_asset
+        # 旧断言「产生新任务」（n_after > n_before）与该设计不符，
+        # 2026-10-06 C3 修复轮改为断言同步语义本身（任务数不变 + spec 已更新）。
+        checks.append(("describe 同步语义（不产生任务行）", n_after == n_before,
+                       f"{n_before} → {n_after}（describe 不入队）"))
 
         say("=" * 78)
         for name, ok, detail in checks:

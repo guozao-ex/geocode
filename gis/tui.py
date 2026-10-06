@@ -14,30 +14,26 @@
 
 from __future__ import annotations
 
-import json
 import subprocess
 import sys
 import time
-from pathlib import Path
+from typing import ClassVar
 
 from textual import on, work
 from textual.app import App, ComposeResult
-from textual.binding import Binding
+from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import (
     Button,
     DataTable,
     Footer,
     Header,
-    Label,
     RichLog,
     Static,
-    TabbedContent,
-    TabPane,
 )
 
-from .client import Client, DaemonError
 from . import geoenv
+from .client import Client, DaemonError
 
 REFRESH_S = 2.0
 
@@ -48,6 +44,8 @@ REFRESH_S = 2.0
 
 class StatusLine(Static):
     """一行「灯 + 标签 + 值」。"""
+
+    _label: str
 
     def __init__(self, label: str, id: str | None = None) -> None:
         super().__init__(id=id)
@@ -64,7 +62,7 @@ class StatusLine(Static):
 # ---------------------------------------------------------------------------
 
 class GeoCodeTUI(App):
-    CSS = """
+    CSS: ClassVar[str] = """
     Screen { layout: vertical; }
     #status-box {
         height: auto; padding: 0 1; border: round $primary;
@@ -79,7 +77,7 @@ class GeoCodeTUI(App):
     DataTable { height: 1fr; }
     """
 
-    BINDINGS = [
+    BINDINGS: ClassVar[list[BindingType]] = [
         Binding("q", "quit", "退出"),
         Binding("r", "refresh", "刷新"),
         Binding("s", "submit", "提交任务"),
@@ -90,7 +88,11 @@ class GeoCodeTUI(App):
         Binding("escape", "quit", "退出"),
     ]
 
-    TITLE = "GeoCode Console"
+    TITLE: str | None = "GeoCode Console"
+
+    client: Client
+    port: int
+    _last_job_count: int
 
     def __init__(self, host: str = "127.0.0.1", port: int = 6531) -> None:
         super().__init__()
@@ -251,7 +253,7 @@ class GeoCodeTUI(App):
         if jobs:
             try:
                 t.move_cursor(row=min(cur, len(jobs) - 1))
-            except Exception:
+            except Exception:  # noqa: BLE001,S110 — 光标越界无所谓，忽略
                 pass
 
         # 新任务 / 状态变化写进日志
@@ -320,7 +322,7 @@ class GeoCodeTUI(App):
         if not asset:
             try:
                 asset = self.client.status()["assets_known"][0]
-            except Exception:
+            except Exception:  # noqa: BLE001 — 拿不到就用默认资产
                 asset = "COPERNICUS/S2_SR_HARMONIZED"
 
         self.call_from_thread(self.log_msg, f"探测 {asset} …")
@@ -389,7 +391,7 @@ class GeoCodeTUI(App):
                 stderr=subprocess.DEVNULL,
                 creationflags=getattr(subprocess, "DETACHED_PROCESS", 0),
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — 子进程启动失败原因杂，统一报给用户
             self.call_from_thread(self.log_msg, f"[red]启动失败：{e}[/]")
             return
         for _ in range(20):
@@ -405,7 +407,7 @@ class GeoCodeTUI(App):
         try:
             row = t.coordinate_to_cell_key(t.cursor_coordinate).row_key
             return row.value if row else None
-        except Exception:
+        except Exception:  # noqa: BLE001 — 没有选中行时取不到坐标
             return None
 
     # --- 事件 -------------------------------------------------------------

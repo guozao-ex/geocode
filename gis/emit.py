@@ -17,19 +17,26 @@
 from __future__ import annotations
 
 import json
-import os
-import shutil
-import subprocess
 import urllib.request
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from . import geoenv, qgis_bridge as _qb
+from . import geoenv
+from . import qgis_bridge as _qb
 from .grid import Grid, compute_grid
-from .jobs import Job, JobCancelled
-from .spec import ArtifactSpec, Exit
+from .jobs import Job
+from .spec import ArtifactSpec, SpecError, time_periods
+
+if TYPE_CHECKING:  # 仅用于注解；运行时仍是各函数内的惰性导入
+    import numpy as np
+    import xarray as xr
 
 # getDownloadURL 单次请求的像素上限（经验值）
 MAX_DIRECT_PIXELS = 64_000_000
+
+# 波段参数哨兵：单期路径沿用 spec.bands；时序堆叠路径显式传 None
+# （toBands() 后波段名是 期前缀_波段，再传 spec.bands 会 band-not-found）
+_SPEC_BANDS = object()
 
 # map 出口的渲染引擎
 RENDERERS = ("qgis", "arcpy")
@@ -81,6 +88,50 @@ def emit_file(job: Job) -> dict:
     assert spec is not None
     grid = compute_grid(spec)
 
+    # --- 时序模式：期×波段堆叠 GeoTIFF（C3）---
+    if spec.is_timeseries:
+        out = _output_path(spec, "derived", ".tif")
+        if out.exists() and out.stat().st_size > 4096:
+            job.progress("已存在，跳过下载", 90, out.name)
+        else:
+            _download_stack_to(job, out, grid)
+
+        periods = time_periods(spec)
+        info = _describe_raster(out)
+        ok, problems = grid.matches(
+            crs=info.get("crs"), bounds=tuple(info.get("bounds") or (0, 0, 0, 0)),
+            shape=(info.get("height") or 0, info.get("width") or 0),
+        )
+        # 期×波段 数目对不上说明期集合与下载产物脱节，必须报出来
+        expected_bands = len(periods) * len(spec.bands) if spec.bands else None
+        if expected_bands and info.get("bands") != expected_bands:
+            ok = False
+            problems = list(problems) + [
+                f"波段数 {info.get('bands')} != 期数×波段 {expected_bands} "
+                f"（{len(periods)} 期 × {len(spec.bands)} 波段）"
+            ]
+
+        job.artifacts.append(str(out))
+        size_mb = out.stat().st_size / 1024 / 1024
+        job.progress("完成", 100, f"{out.name} ({size_mb:.1f} MB, {len(periods)} 期堆叠)")
+
+        return {
+            "exit": "file",
+            "path": str(out),
+            "size_mb": round(size_mb, 2),
+            "spec_fingerprint": spec.fingerprint(),
+            "grid": grid.to_dict(),
+            "grid_aligned": ok,
+            "grid_problems": problems,
+            "raster": info,
+            "timeseries": {
+                "n_periods": len(periods),
+                "periods": [list(p) for p in periods],
+                "band_layout": f"{len(periods)} 期 × {len(spec.bands)} 波段，"
+                               "第 i 期波段区间 = [i*B, (i+1)*B)，波段名 = 期起点YYYYMMDD_波段",
+            },
+        }
+
     out = _output_path(spec, "derived", ".tif")
     if out.exists() and out.stat().st_size > 4096:
         job.progress("已存在，跳过下载", 90, out.name)
@@ -110,17 +161,50 @@ def emit_file(job: Job) -> dict:
     }
 
 
-def _download_to(job: Job, out_path: Path, grid: Grid) -> Path:
+def _download_to(
+    job: Job,
+    out_path: Path,
+    grid: Grid,
+    *,
+    img=None,
+    pixels: int | None = None,
+    bands=_SPEC_BANDS,
+) -> Path:
+    """
+    单期 getDownloadURL 直下（保持旧行为）。时序堆叠请走 _download_stack_to。
+    """
     from . import source
 
     spec = job.spec
     assert spec is not None
 
-    job.progress("构建计算图", 5, f"{spec.asset} → ee.Image")
-    img = source.build_image(spec)
-    job.check_cancelled()
+    if img is None:
+        job.progress("构建计算图", 5, f"{spec.asset} → ee.Image")
+        img = source.build_image(spec)
+    out = _fetch_tif(job, out_path, grid, spec, img, pixels=pixels, bands=bands)
+    job.progress("落盘完成", 92, f"{out_path.name} ({out_path.stat().st_size/1024/1024:.1f} MB)")
+    return out
 
-    est = grid.width * grid.height
+
+def _fetch_tif(
+    job: Job,
+    out_path: Path,
+    grid: Grid,
+    spec: ArtifactSpec,
+    img,
+    *,
+    pixels: int | None = None,
+    bands=_SPEC_BANDS,
+) -> Path:
+    """
+    getDownloadURL 单请求核心：region/params → 下载 → 原子落 out_path。
+
+    ⚠️ region 必须是 **EPSG:4326 经纬度**（红线 5）—— 投影坐标能"work"纯属
+    .clip(aoi) footprint 的巧合，加云掩膜后 updateMask 丢了 footprint 才暴露。
+    ⚠️ bands 必须是列表（json.dumps 出来会被当成单个波段名）。
+    bands 传 _SPEC_BANDS 哨兵 = 沿用 spec.bands；显式 None = 不传（吃全部波段）。
+    """
+    est = pixels if pixels is not None else grid.width * grid.height
     if est > MAX_DIRECT_PIXELS:
         raise ValueError(
             f"网格太大，不适合直下：{grid.width}×{grid.height} = {est/1e6:.1f} 百万像素，"
@@ -134,15 +218,6 @@ def _download_to(job: Job, out_path: Path, grid: Grid) -> Path:
         )
 
     job.progress("申请下载链接", 15, f"{grid.width}×{grid.height} @ {grid.scale}m")
-    # getDownloadURL 的 params 直接透传 REST API，两个坑：
-    #
-    # ⚠️ region 必须是 **EPSG:4326 经纬度**，不是投影坐标。
-    #    之前传的是 grid.bounds（米），能"work"纯属巧合 ——
-    #    .clip(aoi) 让影像拿到了 AOI 的 footprint，EE 用的是 footprint，
-    #    我那个错误的 region 根本没被理。加了云掩膜后 updateMask 丢了
-    #    footprint，才暴露成 "Image is unbounded"。
-    #
-    # ⚠️ bands 必须是列表（json.dumps 出来会被当成单个波段名）
     from .spec import aoi_bbox as _aoi_bbox
     region = list(_aoi_bbox(spec.aoi) or ())
     if not region:
@@ -158,8 +233,10 @@ def _download_to(job: Job, out_path: Path, grid: Grid) -> Path:
         "format": "GEO_TIFF",
         "filePerBand": False,
     }
-    if spec.bands:
-        params["bands"] = list(spec.bands)
+    if bands is _SPEC_BANDS:
+        bands = list(spec.bands) if spec.bands else None
+    if bands:
+        params["bands"] = list(bands)
     job.check_cancelled()
 
     url = img.getDownloadURL(params)
@@ -179,8 +256,119 @@ def _download_to(job: Job, out_path: Path, grid: Grid) -> Path:
         tmp.unlink(missing_ok=True)
         raise
 
+    return out_path
+
+
+def _download_stack_to(job: Job, out_path: Path, grid: Grid) -> Path:
+    """
+    时序堆叠下载：逐期 getDownloadURL 拉取 → **本地合并**成单张 N×B 波段
+    GeoTIFF（期主序，波段名 = 期起点YYYYMMDD_波段，与单期同名约定兼容）。
+
+    为什么不 toBands() 单请求（2026-10-06 实测）：
+        9 波段堆叠的 getDownloadURL 请求 54,613,440 字节 > GEE 的
+        50,331,648 字节上限，直接 400。逐期请求与单期同限，稳。
+    这是 spec.md Constraints 已授权的等价实现（验收判据不变：单张 N×B、
+    期前缀命名、逐期与单期产物对齐 ≤0.5）。
+    """
+    from . import source
+
+    spec = job.spec
+    assert spec is not None
+    periods = time_periods(spec)
+    n_bands = len(spec.bands) if spec.bands else 1
+
+    # 总量护栏（合并时的内存与请求次数）
+    est = grid.width * grid.height * len(periods) * n_bands
+    if est > MAX_DIRECT_PIXELS:
+        raise ValueError(
+            f"时序堆叠太大：{grid.width}×{grid.height} × {len(periods)} 期 × {n_bands} 波段"
+            f" = {est/1e6:.1f} 百万像素，上限约 {MAX_DIRECT_PIXELS/1e6:.0f} 百万。\n"
+            f"  出路：放大 scale、缩小 AOI、减少期数，或等 C5 批处理导出。"
+        )
+
+    job.progress("构建时序计算图", 5, f"{spec.asset} → {len(periods)} 期")
+    images = source.build_cube_periods(spec)
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_final = out_path.with_suffix(out_path.suffix + ".part")
+    period_files: list[Path] = []
+    try:
+        for i, img_i in enumerate(images):
+            pf = out_path.with_name(f"{out_path.stem}.p{i}.tmp.tif")
+            job.progress(
+                "逐期下载", 10 + 60 * i // max(len(images), 1),
+                f"期 {i + 1}/{len(images)}（{periods[i][0]} 起）",
+            )
+            _fetch_tif(job, pf, grid, spec, img_i)
+            period_files.append(pf)
+
+        job.progress("本地合并", 85, f"{len(period_files)} 期 → 单张 {len(periods)}×{n_bands} 波段")
+        _merge_stack(period_files, tmp_final, grid, periods, list(spec.bands) or None)
+        tmp_final.replace(out_path)
+    except BaseException:
+        tmp_final.unlink(missing_ok=True)
+        raise
+    finally:
+        for pf in period_files:
+            pf.unlink(missing_ok=True)
+            Path(str(pf) + ".part").unlink(missing_ok=True)
+
     job.progress("落盘完成", 92, f"{out_path.name} ({out_path.stat().st_size/1024/1024:.1f} MB)")
     return out_path
+
+
+def _merge_stack(
+    period_files: list[Path],
+    dst: Path,
+    grid: Grid,
+    periods: list,
+    bands: list[str] | None,
+) -> None:
+    """逐期 GeoTIFF → 单张期主序 N×B GeoTIFF（rasterio + Affine，字段名显式）。"""
+    import rasterio
+    from rasterio.transform import Affine
+
+    n_periods = len(period_files)
+    n_bands = len(bands) if bands else 1
+
+    with rasterio.open(period_files[0]) as p0:
+        dtype = p0.dtypes[0]
+        nodata = p0.nodata
+
+    descriptions = [
+        f"{ps.replace('-', '')}_{bd}"
+        for (ps, _pe) in periods
+        for bd in (bands or [f"b{i}" for i in range(1, n_bands + 1)])
+    ]
+
+    with rasterio.open(
+        dst, "w", driver="GTiff",
+        width=grid.width, height=grid.height,
+        count=n_periods * n_bands, dtype=dtype,
+        crs=grid.crs,
+        transform=Affine(grid.scale, 0.0, grid.xmin, 0.0, -grid.scale, grid.ymax),
+        nodata=nodata,
+        tiled=True, blockxsize=256, blockysize=256,
+        compress="deflate",
+    ) as dst_ds:
+        k = 0
+        for pf in period_files:
+            with rasterio.open(pf) as src:
+                if src.height != grid.height or src.width != grid.width:
+                    raise RuntimeError(
+                        f"期文件 {pf.name} 网格 {src.width}×{src.height} 与 "
+                        f"{grid.width}×{grid.height} 不符 —— GEE 未按请求网格返回。"
+                    )
+                if src.dtypes[0] != dtype:
+                    raise RuntimeError(
+                        f"期文件 {pf.name} dtype {src.dtypes[0]} 与首期 {dtype} 不一致 —— "
+                        "GEE 逐期返回类型漂移，拒绝合并以免堆叠错位。"
+                    )
+                for j in range(1, src.count + 1):
+                    k += 1
+                    dst_ds.write(src.read(j), k)
+                    if k <= len(descriptions):
+                        dst_ds.set_band_description(k, descriptions[k - 1])
 
 
 def _download(url: str, dest: Path, job: Job) -> None:
@@ -234,10 +422,11 @@ def _describe_raster(p: Path) -> dict:
 
 def emit_array(job: Job) -> dict:
     """
-    xee 把 ee.Image 变成惰性 xarray，Dask 分块拉像素。
+    xee 把 ee.Image / ee.ImageCollection 变成惰性 xarray，Dask 分块拉像素。
 
     与 emit_file 共用同一份 grid —— 所以数组和 GeoTIFF 是**同一个网格**，
-    可以逐像素做算术。
+    可以逐像素做算术。时序 spec 走 source.build_cube() 的期集合，
+    输出沿时间维堆栈的 (time, y, x) 立方体。
     """
     import xarray as xr
 
@@ -245,60 +434,47 @@ def emit_array(job: Job) -> dict:
     assert spec is not None
     grid = compute_grid(spec)
 
-    job.progress("构建计算图", 8, f"{spec.asset} → ee.Image")
-    from . import source
-    ee, _ = geoenv.init_ee()
-    ee.Initialize()  # 幂等
-    img = source.build_image(spec)
-    job.check_cancelled()
-
-    job.progress("打开 xee 数据集", 20, f"{grid.width}×{grid.height} @ {grid.scale}m")
-    # xee 需要 dask 才不会在 open_dataset 时就拉全量
-    #
-    # ⚠️ shape_2d 是 (width, height)，**不是** (height, width)。
-    # 传反了不会报错，只会给你一个转置的数组 —— 尺寸对不上时就发现了，
-    # 但当网格恰为正方形时（w==h）它会静默地错下去。
-    # 已用逐像素比对验证：传 (w,h) 时与 GeoTIFF 完全一致。
-    ds = xr.open_dataset(
-        img,
-        engine="ee",
-        crs=grid.crs,
-        crs_transform=tuple(grid.transform),   # xee 要 tuple/Affine，list 会 TypeError
-        shape_2d=(grid.width, grid.height),    # ← (x, y)，已实测确认
-        ee_init_if_necessary=False,
-    )
-
-    job.progress("计算中（分块拉像素）", 35, "这一步可能较慢，取决于范围")
-    job.check_cancelled()
-
-    # 不要手动 .chunk() —— 实测它会触发 xee 内部的 select('*')，
-    # 而当前 EE API 拒绝 '*' 通配符（Invalid regular expression）。
-    # 需要分块时应在 open_dataset 时用 io_chunks/chunks 参数，
-    # 而不是事后 .chunk()。此处网格仅 860×784，直接 compute 即可。
-    try:
-        arr = ds.compute()
-    except Exception as e:
-        raise RuntimeError(
-            f"xee 拉取失败：{type(e).__name__}: {e}\n"
-            f"  范围 {grid.width}×{grid.height}，{len(spec.bands) or '?'} 个波段。\n"
-            f"  常见原因：\n"
-            f"    - 范围太大 → 放大 scale、缩小 AOI，或改用 exit='file' + 本地读取\n"
-            f"    - 触发配额（429）→ 减少 DASK_NUM_WORKERS\n"
-            f"  注意：xee 是『把像素拉到本地算』，不是『服务端算完只回结果』。"
-        ) from e
-
-    job.check_cancelled()
-    job.progress("落盘", 80, "NetCDF")
+    periods = time_periods(spec) if spec.is_timeseries else None
 
     out = _output_path(spec, "derived", ".nc")
     out.parent.mkdir(parents=True, exist_ok=True)
-    tmp = out.with_suffix(out.suffix + ".part")
-    try:
-        arr.to_netcdf(tmp)
-        tmp.replace(out)
-    except BaseException:
-        tmp.unlink(missing_ok=True)
-        raise
+
+    if out.exists() and out.stat().st_size > 4096:
+        # 产物缓存：.nc 与 .tif 一样是指纹化的确定性产物（xee computePixels
+        # 对同图同参逐位一致），命中即复用 —— 与 _ensure_raster 同一哲学。
+        job.progress("复用已有数组产物", 80,
+                     f"{out.name} ({out.stat().st_size/1048576:.1f} MB)")
+        with xr.open_dataset(out) as _ds:
+            arr = _ds.load()
+    else:
+        arr = _compute_array_via_xee(job, spec, grid, periods)
+        job.progress("落盘", 80, "NetCDF")
+        tmp = out.with_suffix(out.suffix + ".part")
+        try:
+            arr.to_netcdf(tmp)
+            tmp.replace(out)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
+
+    job.check_cancelled()
+
+    timeseries_info: dict | None = None
+    if periods is not None:
+        if "time" not in arr.sizes or arr.sizes["time"] != len(periods):
+            raise RuntimeError(
+                f"时序立方体期数不符：期望 {len(periods)} 期，"
+                f"实际 time 维 = {dict(arr.sizes).get('time')}。\n"
+                "  常见原因：某期窗口内没有影像（空期塌缩失败）或波段名不一致。"
+            )
+        timeseries_info = {
+            "n_periods": len(periods),
+            "periods": [list(p) for p in periods],
+            "time_coords": [
+                str(t)[:10] for t in arr["time"].values
+            ] if "time" in arr.coords else None,
+        }
+        job.progress("期数校验", 90, f"{len(periods)} 期堆叠完成")
 
     sample = _array_sample(arr)
     job.artifacts.append(str(out))
@@ -314,7 +490,88 @@ def emit_array(job: Job) -> dict:
         "dims": dict(arr.sizes),
         "vars": list(arr.data_vars),
         "sample": sample,
+        **({"timeseries": timeseries_info} if timeseries_info else {}),
     }
+
+
+def _compute_array_via_xee(job: Job, spec: ArtifactSpec, grid: Grid, periods) -> "xr.Dataset":
+    """构建计算图 → xee 拉像素 → 内存数组（emit_array 的下载路径，无缓存分支）。"""
+    import warnings
+
+    import xarray as xr
+
+    from . import source
+    ee, _ = geoenv.init_ee()
+    ee.Initialize()  # 幂等
+
+    job.progress("构建计算图", 8, f"{spec.asset} → ee.Image")
+    n_images = -1
+    if spec.is_timeseries:
+        obj = source.build_cube(spec)
+        n_images = len(periods)   # 期数已知 → 免掉 xee 内部的 collection.size() 慢扫描
+        job.progress("构建计算图", 8, f"{spec.asset} → {len(periods)} 期 ee.ImageCollection")
+    else:
+        obj = source.build_image(spec)
+    job.check_cancelled()
+
+    job.progress("打开 xee 数据集", 20, f"{grid.width}×{grid.height} @ {grid.scale}m")
+    # xee 需要 dask 才不会在 open_dataset 时就拉全量
+    #
+    # ⚠️ shape_2d 是 (width, height)，**不是** (height, width)。
+    # 传反了不会报错，只会给你一个转置的数组 —— 尺寸对不上时就发现了，
+    # 但当网格恰为正方形时（w==h）它会静默地错下去。
+    # 已用逐像素比对验证：传 (w,h) 时与 GeoTIFF 完全一致。
+    #
+    # ⚠️ "Unable to retrieve 'system:time_start'" 是 xee 0.1.2 内部双路径的
+    # 良性 UserWarning —— 时间坐标实测正确（emit_array 的期数/坐标断言兜底），
+    # 这里定向抑制，避免污染任务日志。
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore", message=r"Unable to retrieve 'system:time_start'",
+        )
+        ds = xr.open_dataset(
+            obj,
+            engine="ee",
+            crs=grid.crs,
+            crs_transform=tuple(grid.transform),   # xee 要 tuple/Affine，list 会 TypeError
+            shape_2d=(grid.width, grid.height),    # ← (x, y)，已实测确认
+            n_images=n_images,
+            ee_init_if_necessary=False,
+        )
+
+    job.progress("计算中（分块拉像素）", 35, "这一步可能较慢，取决于范围")
+    job.check_cancelled()
+
+    # 不要手动 .chunk() —— 实测它会触发 xee 内部的 select('*')，
+    # 而当前 EE API 拒绝 '*' 通配符（Invalid regular expression）。
+    # 需要分块时应在 open_dataset 时用 io_chunks/chunks 参数，
+    # 而不是事后 .chunk()。此处网格仅 860×784，直接 compute 即可。
+    try:
+        return ds.compute()
+    except Exception as e:
+        diag = ""
+        if periods is not None:
+            # 失败路径才做逐期影像数诊断（成功路径不付元数据扫描的开销）
+            try:
+                d = source.diagnose_cube(spec)
+                empties = [p["period"][0] for p in d["periods"] if p["n_scenes"] == 0]
+                diag = (
+                    "\n  逐期影像数诊断：" + json.dumps(d["periods"], ensure_ascii=False)
+                    + (f"\n  ⚠️ 空期（窗内 0 景）：{empties}" if empties else "")
+                )
+            except Exception:
+                pass
+        raise RuntimeError(
+            f"xee 拉取失败：{type(e).__name__}: {e}\n"
+            f"  范围 {grid.width}×{grid.height}，"
+            f"{len(spec.bands) or '?'} 个波段"
+            + (f"，{len(periods)} 期。" if periods else ".") + "\n"
+            f"  常见原因：\n"
+            f"    - 范围太大 → 放大 scale、缩小 AOI，或改用 exit='file' + 本地读取\n"
+            f"    - 触发配额（429）→ 减少 DASK_NUM_WORKERS\n"
+            f"    - 空期（窗内 0 景）→ 调整期窗口或换数据集{diag}\n"
+            f"  注意：xee 是『把像素拉到本地算』，不是『服务端算完只回结果』。"
+        ) from e
 
 
 def _array_sample(arr, rows: int = 3, cols: int = 3) -> dict:
@@ -366,6 +623,18 @@ def emit_map(job: Job) -> dict:
 
     spec = job.spec
     assert spec is not None
+
+    # 时序 spec 拒绝出图（C3 Shape 裁决：拒绝而非静默塌缩成全期合成，
+    # 否则同一 spec 三出口产物语义静默分歧）。多期渲染留待后续 change。
+    if spec.is_timeseries:
+        raise SpecError(
+            "emit_map 暂不支持时序 spec（time_step / time_ranges）。\n"
+            "  出路：\n"
+            "    1. 对单个时间窗口用不含时序字段的 spec 出图；\n"
+            "    2. 时序数据本身走 emit_array（NetCDF 立方体）或"
+            " emit_file（堆叠 GeoTIFF）；\n"
+            "    3. 多期渲染（动画 / 分幅）留待后续 change。"
+        )
 
     raster, grid = _ensure_raster(job)
     job.check_cancelled()
@@ -527,7 +796,7 @@ def _write_geopng(path: Path, rgb8: "np.ndarray", grid: Grid, spec: ArtifactSpec
 
     tmp = str(path.with_suffix(".png.part"))
     png = gdal.GetDriverByName("PNG").CreateCopy(tmp, ds)
-    png = None
+    png = None  # noqa: F841 — 释放 GDAL dataset 引用，触发落盘
     ds = None
     # GDAL 会把地理参考写进旁挂的 <name>.aux.xml。
     # 只重命名 .part 会留下孤儿 aux —— 连带把 aux 也搬过去。
@@ -633,7 +902,6 @@ def compare_exits(spec: ArtifactSpec) -> dict:
     """
     import numpy as np
 
-    b = spec.fingerprint()[:8]
     tif = _output_path(spec, "derived", ".tif")
     nc = _output_path(spec, "derived", ".nc")
     report: dict = {"tolerance": ALIGN_TOLERANCE, "fingerprint": spec.fingerprint()}
@@ -718,7 +986,6 @@ def write_visual_rgb(spec: ArtifactSpec, raster: Path, grid: Grid) -> Path:
     """
     import numpy as np
     import rioxarray
-    from osgeo import gdal, osr
 
     src = rioxarray.open_rasterio(raster, masked=True)
     render = spec.render

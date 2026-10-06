@@ -1,6 +1,10 @@
-import io, sys, time, json
+import io
+import sys
+import time
+
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 from gis.client import Client
+
 c = Client()
 AOI = {"type":"Polygon","coordinates":[[[116.30,39.95],[116.40,39.95],
                                         [116.40,40.02],[116.30,40.02],[116.30,39.95]]]}

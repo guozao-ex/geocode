@@ -23,6 +23,10 @@ class DaemonError(RuntimeError):
 class Client:
     """直连 REST 路由的客户端。TUI / CLI 用这个。"""
 
+    base: str
+    timeout: float
+    _opener: urllib.request.OpenerDirector
+
     def __init__(self, host: str = "127.0.0.1", port: int = 6531, timeout: float = 30.0) -> None:
         self.base = f"http://{host}:{port}"
         self.timeout = timeout
@@ -116,6 +120,11 @@ class Client:
 class McpClient:
     """极简 MCP 客户端。用来验证 MCP 端点，也方便脚本化调用。"""
 
+    url: str
+    timeout: float
+    _id: int
+    _opener: urllib.request.OpenerDirector
+
     def __init__(self, host: str = "127.0.0.1", port: int = 6531, timeout: float = 60.0) -> None:
         self.url = f"http://{host}:{port}/mcp"
         self.timeout = timeout
@@ -153,7 +162,6 @@ class McpClient:
 
 
 if __name__ == "__main__":
-    import sys
 
     c = Client()
     if not c.alive():

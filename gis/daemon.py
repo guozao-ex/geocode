@@ -19,7 +19,6 @@ from __future__ import annotations
 import argparse
 import json
 import queue
-import socket
 import threading
 import time
 import traceback
@@ -28,8 +27,16 @@ from typing import Any
 from urllib.parse import urlparse
 
 from . import geoenv, preflight
-from .jobs import Jobs, KIND_DEFAULTS, KIND_DESCRIBE, KIND_EMIT, run_defaults, run_describe, run_emit
-from .spec import ArtifactSpec, EXITS, SpecError
+from .jobs import (
+    KIND_DEFAULTS,
+    KIND_DESCRIBE,
+    KIND_EMIT,
+    Jobs,
+    run_defaults,
+    run_describe,
+    run_emit,
+)
+from .spec import EXITS, ArtifactSpec, SpecError
 
 SERVER_NAME = "geocode-daemon"
 SERVER_VERSION = "0.1.0"
@@ -107,7 +114,7 @@ def act_spec_set(patch: dict) -> dict:
         for key in ("bands", "tags"):
             if isinstance(base.get(key), list):
                 base[key] = tuple(base[key])
-        for key in ("time_range",):
+        for key in ("time_range", "time_ranges"):
             if isinstance(base.get(key), list):
                 base[key] = tuple(base[key])
         spec = ArtifactSpec.from_dict(base)
@@ -361,8 +368,8 @@ _PORT = 6531
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = f"{SERVER_NAME}/{SERVER_VERSION}"
-    protocol_version = "HTTP/1.1"
+    server_version: str = f"{SERVER_NAME}/{SERVER_VERSION}"
+    protocol_version: str = "HTTP/1.1"
 
     # --- 工具 ------------------------------------------------------------
 
@@ -576,7 +583,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if port_in_use(host, port):
         print(f"端口 {port} 已被占用 —— 守护进程大概已经在跑了。")
-        print(f"  查看状态: python -m gis.cli status")
+        print("  查看状态: python -m gis.cli status")
         return 2
 
     httpd = serve(host, port)

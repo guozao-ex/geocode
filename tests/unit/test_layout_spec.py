@@ -3,6 +3,7 @@
 import unittest
 
 from _helpers import make_spec
+
 from gis.spec import LayoutSpec, SpecError
 
 

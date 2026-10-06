@@ -19,8 +19,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from . import geoenv
-from .spec import ArtifactSpec, SpecError
-
+from .spec import ArtifactSpec, SpecError, _iso_to_millis, _parse_iso_date, time_periods
 
 # ---------------------------------------------------------------------------
 # 常见数据集约定
@@ -384,6 +383,126 @@ def build_collection(spec: ArtifactSpec):
     if spec.bands:
         col = col.select(list(spec.bands))
     return col
+
+
+def build_cube(spec: ArtifactSpec):
+    """
+    时序 spec → ee.ImageCollection：每期窗口内按单期语义塌缩，期与期堆叠。
+
+    ⚠️ 红线 1：ee 对象只在 source.py 构建 —— 三个出口都消费本函数的返回值，
+    不允许出口自己拼 ee 对象。
+
+    每期算子序列与 build_image 的 collection 分支**逐算子一致**（只是作用在
+    该期窗口上），保证"立方体第 i 期 ≈ 单期产物"的对齐判据成立：
+        filterDate(期) → filterBounds → 云掩膜(select 之前, 红线 4)
+        → select → reducer → toFloat → 反射率缩放 → clip
+        → setDefaultProjection → band_expr
+    期窗口由 spec.time_periods() 纯函数推导（离线可测）。
+
+    每期设置 system:time_start（期起点，xee 的时间坐标来源）与
+    system:index（期起点 YYYYMMDD，toBands() 的波段前缀来源）。
+
+    刻意不复用/重构 build_image：单期路径一个字节都不动（红线 3 —— 不含
+    时序字段的 spec 的像素输出必须逐位不变），这里的重复是有意的。
+    """
+    ee, _ = geoenv.init_ee()
+    return ee.ImageCollection.fromImages(_cube_period_images(spec))
+
+
+def build_cube_periods(spec: ArtifactSpec) -> list:
+    """
+    逐期 ee.Image 列表（与 build_cube 完全同一算子序列）。
+
+    文件出口用它逐期拉取后**本地合并**成单张 N×B 波段 GeoTIFF ——
+    实测（2026-10-06）：toBands() 的 9 波段单请求 54.6MB 被 GEE 的
+    50MB 请求上限拒绝；逐期请求与单期同限，稳。
+    """
+    if not spec.is_timeseries:
+        raise SpecError(
+            "build_cube_periods 需要时序 spec（time_step 或 time_ranges 任一设置）。\n"
+            "  单期计算请用 build_image。"
+        )
+    return _cube_period_images(spec)
+
+
+def diagnose_cube(spec: ArtifactSpec) -> dict:
+    """
+    逐期影像数诊断（只拉元数据，不拉像素）。
+
+    供出口层在拉取失败时给出精确错误（哪期是空期 / 各期影像数）；
+    成功路径不调用 —— 每期一次元数据查询，N 大时不便宜。
+    """
+    if not spec.is_timeseries:
+        raise SpecError("diagnose_cube 需要时序 spec（time_step 或 time_ranges 任一设置）。")
+    if not spec.asset:
+        raise SpecError("spec.asset 为空，无法诊断。")
+    ee, _ = geoenv.init_ee()
+    aoi = to_ee_geometry(spec.aoi)
+    periods = time_periods(spec)
+
+    entries = []
+    for ps, pe in periods:
+        col = ee.ImageCollection(spec.asset).filterDate(ps, pe)
+        if aoi is not None:
+            col = col.filterBounds(aoi)
+        try:
+            n = int(col.count().getInfo())
+        except Exception:
+            n = None   # 诊断自身失败不掩盖原始错误
+        entries.append({"period": [ps, pe], "n_scenes": n})
+    return {
+        "periods": entries,
+        "empty": [e["period"] for e in entries if e["n_scenes"] == 0],
+    }
+
+
+def _cube_period_images(spec: ArtifactSpec) -> list:
+    """期窗口 → 逐期 ee.Image（红线 1：ee 构建只在这里发生）。"""
+    if not spec.asset:
+        raise SpecError(
+            "spec.asset 为空，无法构建时序计算图。\n"
+            "  例：asset='COPERNICUS/S2_SR_HARMONIZED'"
+        )
+    ee, _ = geoenv.init_ee()
+
+    aoi = to_ee_geometry(spec.aoi)
+    preset = preset_for(spec.asset)
+    scheme = preset.cloud_mask if preset else None
+    reducer = spec.reducer or "median"
+    periods = time_periods(spec)
+
+    images = []
+    for ps, pe in periods:
+        col = ee.ImageCollection(spec.asset).filterDate(ps, pe)
+        if aoi is not None:
+            col = col.filterBounds(aoi)
+        # ★ 云掩膜必须在 select 之前（红线 4）—— SCL / QA_PIXEL 不在用户波段里
+        if scheme:
+            col = mask_clouds(col, scheme)
+        if spec.bands:
+            col = col.select(list(spec.bands))
+        img = getattr(col, reducer)()
+
+        img = img.toFloat()
+        if preset and preset.reflectance_scale:
+            img = img.multiply(preset.reflectance_scale)
+        if aoi is not None:
+            img = img.clip(aoi)
+        if scheme:
+            try:
+                img = img.setDefaultProjection("EPSG:4326", None, 1)
+            except Exception:
+                pass
+        if spec.band_expr:
+            img = img.expression(spec.band_expr)
+
+        img = img.set({
+            "system:time_start": _iso_to_millis(ps),
+            "system:index": _parse_iso_date(ps).strftime("%Y%m%d"),
+        })
+        images.append(img)
+
+    return images
 
 
 # ---------------------------------------------------------------------------

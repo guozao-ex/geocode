@@ -6,11 +6,16 @@
 import unittest
 
 from _helpers import make_spec
+
 from gis import grid as grid_module
 from gis.grid import Grid, GridError, compute_grid
+from gis.spec import ArtifactSpec
 
 
 class ComputeGridTest(unittest.TestCase):
+    spec: ArtifactSpec
+    grid: Grid
+
     def setUp(self):
         self.spec = make_spec()
         self.grid = compute_grid(self.spec)
@@ -74,6 +79,8 @@ class ComputeGridErrorsTest(unittest.TestCase):
 
 class GridMatchesTest(unittest.TestCase):
     """Grid.matches 是"校验 GEE 是否照给的网格执行"的判据（红线 2 侧面）。"""
+
+    grid: Grid
 
     def setUp(self):
         self.grid = compute_grid(make_spec())

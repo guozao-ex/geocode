@@ -19,9 +19,11 @@ ArtifactSpec —— 三个出口共用的唯一产物契约。
 
 from __future__ import annotations
 
+import calendar
 import hashlib
 import json
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Literal
 
 # ★ 处理逻辑版本。
@@ -198,6 +200,107 @@ DTYPES = ("uint8", "int16", "uint16", "int32", "float32", "float64")
 
 REDUCERS = ("median", "mean", "min", "max", "mosaic", "first", "mode", "sum")
 
+# ---------------------------------------------------------------------------
+# 时序模式（C3：多时相堆栈）
+# ---------------------------------------------------------------------------
+#
+# 两种互斥的表达方式（2026-10-06 Shape 裁决）：
+#   time_step   节奏切片：以 time_range[0] 为起点按步长切出连续等宽窗口，
+#               N 由（起止÷步长）确定性推导；每期内 reducer 塌缩。
+#   time_ranges 显式多段：窗口逐条给出，允许不等长（如生长季），N = 条目数。
+#
+# 期窗口推导是纯函数（time_periods），离线可测；serve 侧消费见 source.build_cube。
+
+TIME_STEPS = ("day", "week", "month", "year")
+
+# 期数上限：每期 = 一次独立的像素拉取（xee 逐期 computePixels）， runaway 的
+# N 会拖垮配额与时长。超出报错并提示缩小范围 / 加大步长。
+MAX_TIME_PERIODS = 120
+
+
+def _parse_iso_date(s: str) -> date:
+    """'2024-06-01' 或 ISO datetime 字符串 → date。"""
+    try:
+        return date.fromisoformat(str(s))
+    except ValueError:
+        return datetime.fromisoformat(str(s)).date()
+
+
+def _iso_to_millis(s: str) -> int:
+    """ISO 日期(时间)字符串 → UTC 毫秒（GEE system:time_start 的量纲）。"""
+    txt = str(s)
+    try:
+        d = date.fromisoformat(txt)
+        dt = datetime(d.year, d.month, d.day, tzinfo=timezone.utc)
+    except ValueError:
+        dt = datetime.fromisoformat(txt)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+    return int(dt.timestamp() * 1000)
+
+
+def _add_step(d: date, step: str, k: int = 1) -> date:
+    """日期加 k 个步长。月/年用年月加法，日超过当月天数时钳制到月末。"""
+    if step == "day":
+        return d + timedelta(days=k)
+    if step == "week":
+        return d + timedelta(weeks=k)
+    months = k * (12 if step == "year" else 1)
+    total = d.month - 1 + months
+    y = d.year + total // 12
+    m = total % 12 + 1
+    return date(y, m, min(d.day, calendar.monthrange(y, m)[1]))
+
+
+def time_periods(spec: "ArtifactSpec") -> tuple[tuple[str, str], ...]:
+    """
+    时序 spec → 期窗口序列 [(起, 止), ...]，[起, 止) 语义（GEE filterDate 同款）。
+
+    纯函数，只做字符串/日期运算 —— 期窗口决定逐期计算图，也决定指纹以外的
+    验收对齐（立方体第 i 期 ↔ 单期 spec 的 time_range=第 i 期窗口）。
+    """
+    if spec.time_ranges:
+        windows = tuple((str(a), str(b)) for a, b in spec.time_ranges)
+        if len(windows) > MAX_TIME_PERIODS:
+            raise SpecError(
+                f"期数 {len(windows)} 超过上限 {MAX_TIME_PERIODS}。\n"
+                f"  每期都是一次独立的像素拉取；请合并窗口或拆分任务。"
+            )
+        return windows
+
+    if spec.time_step:
+        if not spec.time_range:
+            raise SpecError(
+                "time_step 模式需要 time_range（起, 止）作为切片范围。"
+            )
+        t0 = _parse_iso_date(spec.time_range[0])
+        t1 = _parse_iso_date(spec.time_range[1])
+        starts: list[date] = []
+        s = t0
+        while s < t1:
+            starts.append(s)
+            s = _add_step(s, spec.time_step)
+        if not starts:
+            raise SpecError(
+                f"时序模式推出的期数为 0（{t0} ~ {t1}，步长 {spec.time_step}）。\n"
+                "  起止相同没有可切分的期；请给出真实的范围。"
+            )
+        if len(starts) > MAX_TIME_PERIODS:
+            raise SpecError(
+                f"期数 {len(starts)} 超过上限 {MAX_TIME_PERIODS}。\n"
+                f"  每期都是一次独立的像素拉取；请缩小 time_range 或加大 time_step。"
+            )
+        windows: list[tuple[str, str]] = []
+        for i, st in enumerate(starts):
+            en = starts[i + 1] if i + 1 < len(starts) else _add_step(starts[-1], spec.time_step)
+            windows.append((st.isoformat(), en.isoformat()))
+        return tuple(windows)
+
+    raise SpecError(
+        "spec 未声明时序（time_step / time_ranges 均缺省），没有期窗口可推导。\n"
+        "  单期计算请走 build_image；时序模式请设置 time_step 或 time_ranges。"
+    )
+
 
 @dataclass(frozen=True)
 class ArtifactSpec:
@@ -227,6 +330,9 @@ class ArtifactSpec:
     # --- 时间 ---
     time_range: tuple[str, str] | None = None   # (ISO 起, ISO 止)
     reducer: str | None = None
+    # --- 时序（C3：多时相堆栈；两字段互斥，任一设置即进入时序模式）---
+    time_step: str | None = None                # "day"/"week"/"month"/"year"
+    time_ranges: tuple[tuple[str, str], ...] | None = None   # 显式多段窗口
 
     # --- 渲染 ---
     render: RenderSpec | None = None
@@ -266,6 +372,46 @@ class ArtifactSpec:
                 f"reducer={self.reducer!r} 不认识。可选：{', '.join(REDUCERS)}"
             )
 
+        # --- 时序字段（C3）---
+        if self.time_step is not None and self.time_ranges is not None:
+            raise SpecError(
+                "time_step 与 time_ranges 互斥：节奏切片和多段显式窗口二选一。\n"
+                "  连续等宽堆栈用 time_step；不等长窗口（如生长季）用 time_ranges。"
+            )
+        if self.is_timeseries:
+            if self.time_step is not None:
+                if self.time_step not in TIME_STEPS:
+                    raise SpecError(
+                        f"time_step={self.time_step!r} 不支持。可选：{', '.join(TIME_STEPS)}"
+                    )
+                if self.time_range is None:
+                    raise SpecError(
+                        "time_step 模式需要 time_range（起, 止）作为切片范围。\n"
+                        "  例：time_range=('2024-01-01','2024-12-31'), time_step='month'"
+                    )
+            if self.time_ranges is not None:
+                if not isinstance(self.time_ranges, (tuple, list)) or not self.time_ranges:
+                    raise SpecError(
+                        "time_ranges 必须是非空的 (起, 止) 窗口序列，"
+                        "如 (('2024-01-01','2024-03-31'), ('2024-06-01','2024-09-30'))。"
+                    )
+                for i, p in enumerate(self.time_ranges):
+                    if not isinstance(p, (tuple, list)) or len(p) != 2:
+                        raise SpecError(
+                            f"time_ranges[{i}] 必须是 (起, 止) 二元组，收到 {p!r}。"
+                        )
+                    if str(p[0]) > str(p[1]):
+                        raise SpecError(
+                            f"time_ranges[{i}] 起点晚于终点：{p[0]} > {p[1]}。"
+                        )
+                if len(self.time_ranges) > MAX_TIME_PERIODS:
+                    raise SpecError(
+                        f"time_ranges 期数 {len(self.time_ranges)} 超过上限 {MAX_TIME_PERIODS}。"
+                    )
+            # 期窗口推导也在校验期跑一遍：零期数、N 上限这类"推导才能发现"的
+            # 问题在 spec_set 时就报出来，而不是等到构建计算图才炸。
+            time_periods(self)
+
         if self.aoi is not None:
             if not isinstance(self.aoi, dict) or "type" not in self.aoi:
                 raise SpecError(
@@ -284,15 +430,24 @@ class ArtifactSpec:
                 )
 
     @property
+    def is_timeseries(self) -> bool:
+        """时序模式：time_step 或 time_ranges 任一设置（两字段互斥，见 validate）。"""
+        return self.time_step is not None or self.time_ranges is not None
+
+    @property
     def is_collection(self) -> bool:
-        """有 time_range 或 reducer 就按 ImageCollection 处理。"""
-        return self.time_range is not None or self.reducer is not None
+        """有 time_range / reducer / 时序字段就按 ImageCollection 处理。"""
+        return (
+            self.time_range is not None
+            or self.reducer is not None
+            or self.is_timeseries
+        )
 
     # ---------------------------------------------------------------- 指纹
 
     def fingerprint(self) -> str:
         """
-        内容指纹：忽略 id / note / tags / render（不影响像素值），
+        内容指纹：忽略 id / note / tags / render / layout（不影响像素值），
         只对决定输出的字段取哈希。
 
         用途：验证"同一 spec 的三个出口产物一致"时，
@@ -310,6 +465,13 @@ class ArtifactSpec:
             "time_range": list(self.time_range) if self.time_range else None,
             "reducer": self.reducer,
         }
+        # 时序字段（C3，红线 8：决定每期窗口 → 决定像素输出 → 入白名单）。
+        # ⚠️ 缺省时整个键必须缺席（而不是写 None）——payload 逐键与旧版完全相同，
+        #    旧 spec 的指纹才不变（A5 守卫 / 金指纹 c9243efd40318c85 锚定）。
+        if self.time_step is not None:
+            payload["time_step"] = self.time_step
+        if self.time_ranges is not None:
+            payload["time_ranges"] = [list(p) for p in self.time_ranges]
         blob = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str)
         return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
 
@@ -328,6 +490,8 @@ class ArtifactSpec:
             "bands": list(self.bands),
             "time_range": list(self.time_range) if self.time_range else None,
             "reducer": self.reducer,
+            "time_step": self.time_step,
+            "time_ranges": [list(p) for p in self.time_ranges] if self.time_ranges else None,
             "render": self.render.to_dict() if self.render else None,
             "layout": self.layout.to_dict() if self.layout else None,
         }
@@ -340,6 +504,7 @@ class ArtifactSpec:
     @staticmethod
     def from_dict(d: dict) -> "ArtifactSpec":
         tr = d.get("time_range")
+        trs = d.get("time_ranges")
         return ArtifactSpec(
             id=d.get("id") or "unnamed",
             asset=d.get("asset"),
@@ -352,6 +517,8 @@ class ArtifactSpec:
             bands=tuple(d.get("bands") or ()),
             time_range=tuple(tr) if tr else None,
             reducer=d.get("reducer"),
+            time_step=d.get("time_step"),
+            time_ranges=tuple((str(p[0]), str(p[1])) for p in trs) if trs else None,
             render=RenderSpec.from_dict(d.get("render")),
             layout=LayoutSpec.from_dict(d.get("layout")),
             note=d.get("note", ""),
