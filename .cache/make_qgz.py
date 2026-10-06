@@ -51,6 +51,7 @@ def main(cfg):
         bands = color.get("bands") or []
         idx = color.get("band_index") or {}
         palette = color.get("palette") or []
+        class_values = color.get("class_values") or []
         stretch = (color.get("stretch") or "stddev").lower()
         stats = color.get("stats") or {}
         dp = layer.dataProvider()
@@ -61,25 +62,45 @@ def main(cfg):
         def rng_for(band_no):
             return stats.get(str(band_no))
 
-        if len(bands) >= 3 and nbands >= 3:
+        if is_byte_rgb:
+            # ★ 已烘焙的 8 位显示栅格：颜色就是像素本身 —— 一律多波段 + 零拉伸。
+            # 这一支必须排在 palette 之前：分类栅格（palette 非空）否则会被单波段
+            # 伪彩分支**再着色一次**，变成双层配色。
+            nums = [idx.get(b, i + 1) for i, b in enumerate(bands[:3])] or [1, 2, 3]
+            r = QgsMultiBandColorRenderer(dp, nums[0], nums[1], nums[2])
+            r.setMinMaxOrigin(QgsRasterMinMaxOrigin())
+            layer.setRenderer(r)
+            mode = "multiband:" + ",".join(str(n) for n in nums) + "+noenhancement(已烘焙)"
+
+        elif len(bands) >= 3 and nbands >= 3:
             nums = [idx.get(b, i + 1) for i, b in enumerate(bands[:3])]
             r = QgsMultiBandColorRenderer(dp, nums[0], nums[1], nums[2])
-            # 8 位显示栅格的拉伸已经烘焙进像素，这里**不要**再加拉伸 ——
-            # 加任何一点都会把已经定好的 0-255 再压一次。
-            if is_byte_rgb:
-                r.setMinMaxOrigin(QgsRasterMinMaxOrigin())
-                mode_suffix = "+noenhancement(已烘焙)"
-            else:
-                try:
-                    p_lo = float((color.get("percentile") or [2.0, 98.0])[0]) / 100.0
-                    p_hi = float((color.get("percentile") or [2.0, 98.0])[1]) / 100.0
-                    apply_stretch(r, p_lo, p_hi)
-                    mode_suffix = "+cumulativecut%d-%d" % (int(p_lo*100), int(p_hi*100))
-                except Exception as exc:
-                    print("WARN: 拉伸设置失败 " + str(exc), file=sys.stderr)
-                    mode_suffix = ""
+            try:
+                p_lo = float((color.get("percentile") or [2.0, 98.0])[0]) / 100.0
+                p_hi = float((color.get("percentile") or [2.0, 98.0])[1]) / 100.0
+                apply_stretch(r, p_lo, p_hi)
+                mode_suffix = "+cumulativecut%d-%d" % (int(p_lo*100), int(p_hi*100))
+            except Exception as exc:
+                print("WARN: 拉伸设置失败 " + str(exc), file=sys.stderr)
+                mode_suffix = ""
             layer.setRenderer(r)
             mode = "multiband:" + ",".join(str(n) for n in nums) + mode_suffix
+
+        elif class_values and palette and nbands <= 2:
+            # 分类栅格源：类值 → 颜色**精确**取色（Exact），不做 min/max 插值 ——
+            # 插值会把 10/20/…/100 这类离散类码渲染成连续色带，与图例对不上。
+            fn = QgsColorRampShader()
+            fn.setColorRampType(QgsColorRampShader.Exact)
+            items = []
+            for v, hexcol in zip(class_values, palette):
+                col = str(hexcol).lstrip("#")
+                if len(col) == 6:
+                    items.append(QgsColorRampShader.ColorRampItem(float(v), QColor("#" + col)))
+            fn.setColorRampItemList(items)
+            shader = QgsRasterShader()
+            shader.setRasterShaderFunction(fn)
+            layer.setRenderer(QgsSingleBandPseudoColorRenderer(dp, 1, shader))
+            mode = "classes:%d" % len(items)
 
         elif palette and nbands >= 1:
             fn = QgsColorRampShader()

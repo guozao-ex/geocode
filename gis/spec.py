@@ -34,7 +34,13 @@ from typing import Any, Literal
 # 因为 _ensure_raster 看到同名文件在，直接复用了旧的。
 #
 # 规则：任何会改变像素输出的代码改动，都必须 +1。
-PROCESSING_VERSION = 2   # 2 = 加云掩膜(SCL/QA_PIXEL) + 反射率缩放
+#
+# 版本史：
+#   2 = 加云掩膜(SCL/QA_PIXEL) + 反射率缩放
+#   3 = C4 修正既有 Landsat C02 L2 的辐射缩放口径（补官方 offset -0.2，
+#       原先只乘 2.75e-05、反射率偏高约 +0.2）—— 见 gis/source.py 的
+#       LANDSAT_SR_TRANSFORMS 与 docs/README.md 的 C4 记录。
+PROCESSING_VERSION = 3
 
 Exit = Literal["array", "file", "map"]
 EXITS: tuple[Exit, ...] = ("array", "file", "map")
@@ -69,6 +75,22 @@ class RenderSpec:
     vmin: float | None = None
     vmax: float | None = None
     nodata_color: str | None = None
+    # 分类栅格：与 palette 等长配对的**精确类值**（如 WorldCover 的 10,20,…,100）。
+    # 给出时按"类值 → 颜色"精确取色，绕过拉伸与色带插值；未列出的值按 nodata 处理。
+    # render 不参与指纹（与 palette 同类），新增字段不影响任何既有 spec。
+    class_values: tuple[float, ...] | None = None
+
+    def __post_init__(self) -> None:
+        if self.class_values is not None:
+            if not self.palette:
+                raise SpecError("class_values 必须与 palette 配对给出（类值 → 颜色）。")
+            if len(self.class_values) != len(self.palette):
+                raise SpecError(
+                    f"class_values（{len(self.class_values)} 个）与 "
+                    f"palette（{len(self.palette)} 个）长度不等。"
+                )
+            if len(set(self.class_values)) != len(self.class_values):
+                raise SpecError("class_values 含重复类值；类值必须唯一。")
 
     def to_dict(self) -> dict:
         d = {
@@ -79,6 +101,7 @@ class RenderSpec:
             "vmin": self.vmin,
             "vmax": self.vmax,
             "nodata_color": self.nodata_color,
+            "class_values": list(self.class_values) if self.class_values else None,
         }
         return {k: v for k, v in d.items() if v is not None}
 
@@ -95,6 +118,8 @@ class RenderSpec:
             kw["percentile"] = tuple(d["percentile"])
         if d.get("palette"):
             kw["palette"] = tuple(d["palette"])
+        if d.get("class_values"):
+            kw["class_values"] = tuple(float(v) for v in d["class_values"])
         for k in ("vmin", "vmax", "nodata_color"):
             if d.get(k) is not None:
                 kw[k] = d[k]

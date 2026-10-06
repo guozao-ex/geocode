@@ -500,8 +500,8 @@ def _render_png(spec: ArtifactSpec, raster: Path, grid: Grid, job: Job) -> Path:
         channels = [_stretch(da.isel(band=i).values, render) for i in picks]
         rgb8 = (np.stack(channels, axis=-1) * 255.0).astype("uint8")
     else:
-        data = _stretch(da.isel(band=(picks[0] if picks else 0)).values, render)
-        rgb8 = (_apply_colormap(data) * 255.0).astype("uint8")
+        rgb8 = (_single_band_rgb(da.isel(band=(picks[0] if picks else 0)).values, render)
+                * 255.0).astype("uint8")
 
     _write_geopng(out, rgb8, grid, spec)
     job.progress("渲染预览图", 92, f"{out.name} ({out.stat().st_size/1024:.0f} KB)")
@@ -556,6 +556,48 @@ def _apply_colormap(data: "np.ndarray") -> "np.ndarray":
     hi = np.clip(lo + 1, 0, len(stops) - 1)
     t = (idx - lo)[..., None]
     return stops[lo] * (1 - t) + stops[hi] * t
+
+
+def _hex_to_rgb01(hexcol: str) -> list:
+    """'006400' / '#006400' → [0.0, 0.392, 0.0]（0-1 浮点）。"""
+    c = str(hexcol).lstrip("#")
+    if len(c) != 6:
+        raise ValueError(f"颜色值 {hexcol!r} 不是 6 位十六进制。")
+    return [int(c[i:i + 2], 16) / 255.0 for i in (0, 2, 4)]
+
+
+def _apply_class_palette(data, render) -> "np.ndarray":
+    """
+    分类栅格：类值 → 颜色**精确映射**（不拉伸、不插值）。
+
+    与 _apply_colormap 的分工：那条固定 viridis 色带把数据当连续量，分类栅格的类码
+    （WorldCover 的 10/20/…/100）在色带上插值出来的颜色既不是标准配色，也没法和图例
+    对齐。这里用数据源自带的类色表逐类取色，未列出的值（含 nodata）落到底色。
+    """
+    import numpy as np
+
+    values = np.asarray(render.class_values, dtype="float64")
+    cols = np.array([_hex_to_rgb01(c) for c in (render.palette or ())], dtype="float32")
+    d = np.asarray(data, dtype="float64")
+
+    base = _hex_to_rgb01(render.nodata_color) if render.nodata_color else [0.0, 0.0, 0.0]
+    out = np.empty(d.shape + (3,), dtype="float32")
+    out[...] = base
+
+    filled = np.zeros(d.shape, dtype=bool)
+    for v, col in zip(values, cols):
+        # 类码是整数；0.5 的容差吸掉浮点噪声，又远小于最小类间距（WorldCover 为 5）
+        m = np.isclose(d, v, atol=0.5) & ~filled
+        out[m] = col
+        filled |= m
+    return out
+
+
+def _single_band_rgb(data, render) -> "np.ndarray":
+    """单波段 → RGB（0-1）。分类栅格精确取色；其余走「拉伸 + 固定色带」。"""
+    if render is not None and render.class_values and render.palette:
+        return _apply_class_palette(data, render)
+    return _apply_colormap(_stretch(data, render))
 
 
 def _stretch(arr, render) -> "np.ndarray":
@@ -732,8 +774,8 @@ def write_visual_rgb(spec: ArtifactSpec, raster: Path, grid: Grid) -> Path:
         ch = [_stretch(src.isel(band=i).values, render) for i in picks]
         rgb8 = (np.stack(ch, axis=-1) * 255.0).astype("uint8")
     else:
-        d = _stretch(src.isel(band=(picks[0] if picks else 0)).values, render)
-        rgb8 = (_apply_colormap(d) * 255.0).astype("uint8")
+        rgb8 = (_single_band_rgb(src.isel(band=(picks[0] if picks else 0)).values, render)
+                * 255.0).astype("uint8")
 
     out = _output_path(spec, "deliver", VISUAL_SUFFIX)
     out.parent.mkdir(parents=True, exist_ok=True)
