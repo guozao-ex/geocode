@@ -1,0 +1,469 @@
+schema: comet.native.v4
+name: p2-batch-export
+language: zh-CN
+phase: archive
+status: done
+state_version: 26
+brief: brief.md
+document_constraints_version: 2
+shape_confirmation_hash: 8094c475ac073fa9dbd0bf85648a150646a07a46ba466055c312ec00e257bf25
+spec_changes:
+  - capability: p2-batch-export
+    operation: create
+    source: specs/p2-batch-export/spec.md
+workspace:
+  isolation: worktree
+  change_branch: comet/p2-batch-export
+  target_branch: main
+  finish: merge
+loop:
+  stage: done
+  goal_cycle: 3
+  iteration: 3
+  attempt: 1
+  retry_epoch: 0
+  failed_iteration_count: 1
+  no_progress_count: 0
+  execution_failure_count: 0
+  previous_unresolved_ids: []
+  next_action: null
+acceptance:
+  - id: A1
+    source: specs/p2-batch-export/spec.md
+    text: 提交批处理导出（验收：A1） 给定一份网格像素数超过 64M 的 spec（如大范围 AOI @ 10m；`getDownloadURL`
+      路径对该网格会拒绝），通过 daemon 提交 `kind="export"`：前置校验通过时，成功创建 GEE 服务端任务并拿到 task
+      id；job 立即返回（job_id + queued 状态）；`job_get` 能查到 GEE 侧状态。同一 spec 走
+      `exit="file"` 仍在 64M 像素处报既有的"网格太大"错误——两条路径边界互不影响。
+    result: passed
+    reason:
+      text: job j_d2f0c3d6（s2_pilot_big）result 记录 max_pixels=115021604（>64M）与
+        destination=Drive/gexports/s2_pilot_big.6ffc30ee*，task
+        S3ESI2YKUM5FOBB6C2AGNRNV 创建成功（本轮以 ee.data.getTaskStatus 只读复核该任务真实存在于
+        GEE，state=CANCELLED 为后续 A7 取消所致）；export 路径不受 MAX_DIRECT_PIXELS 限制（grep
+        确认该常量仅在 emit.py:124 报错分支），emit.py 零改动故 file 出口 64M 报错路径原样保留
+      truncated: false
+  - id: A2
+    source: specs/p2-batch-export/spec.md
+    text: 小任务串行试点闭环（验收：A2） 按红线 6 先提交 1 个小范围任务（网格远小于 64M）：任务经 queued / running 推进，GEE
+      侧 COMPLETED 后本地进入 done；Google Drive 的 `gexports` 文件夹（或提交指定的 folder）中出现以
+      fileNamePrefix 命名的产物文件（分片时为多张 TIF）；job result 含 task id 与产物定位信息（folder +
+      file_prefix）；全程不并行提交第二个任务。
+    result: passed
+    reason:
+      text: job j_dc695981 本地 status=done/pct=100，result 含
+        task_id、folder=gexports、file_prefix=s2_pilot_small.2661d6de、destination_uris（GEE
+        返回的 Drive 文件夹链接）；本轮以 ee.data.getTaskStatus 只读复核
+        UBKXBJUFJJEFVEK4B4K6EX7H=COMPLETED 且带回 destination_uris，与本地一致；代码确认本地
+        DONE 仅以 mapped==DONE（GEE COMPLETED）收敛（run_export 返回路径与 finalize）；红线 6
+        串行（大任务在小任务 COMPLETED 后才提交）
+      truncated: false
+  - id: A3
+    source: specs/p2-batch-export/spec.md
+    text: 持久化与重启恢复（验收：A3） 给定一个重启前提交、尚未终态的 export 任务（task id 已在
+      `.cache/jobs.json`）：重启 daemon 后 `job_list` / `job_get` 仍能看到该任务；daemon 用
+      task id 直连 GEE 重查真实状态并继续推进（如 GEE 已 RUNNING 则本地回到 running，GEE 已 COMPLETED
+      则收敛到 done）；追踪不丢失。describe / defaults / emit 任务不持久化、重启后不出现。
+    result: passed
+    reason:
+      text: .cache/jobs.json 含两个 export 任务完整记录（task_id/spec/status/时间戳/result）；daemon
+        启动 _restore_jobs 经 JOBS.adopt 恢复、_start_poller/_poll_tick 以 task id 经
+        ee.data.getTaskStatus 直连推进（D7，不做列表扫描）；两个任务的本地终态与 GEE
+        真值一致（done↔COMPLETED、cancelled↔CANCELLED，本轮独立复核）；snapshot/_persist_export_jobs
+        仅入档 kind=export，describe/defaults/emit 不持久化
+      truncated: false
+  - id: A4
+    source: specs/p2-batch-export/spec.md
+    text: 三出口与既有行为零回归（验收：A4） `spec.py` / `emit.py` / `source.py` / `grid.py`
+      无改动；`PROCESSING_VERSION` 保持 2；既有 exit=file/array/map 的行为（含 file 出口 64M
+      超限报错路径、`_ensure_raster` 缓存复用、三出口对齐判据）不变；`tests/unit` 全量回归通过。
+    result: passed
+    reason:
+      text: git diff HEAD --name-only 仅 .gitignore/gis/daemon.py/gis/jobs.py 修改 + 新增
+        gis/export.py/gis/jobstore.py/tests/unit/test_export_jobstore.py 与 docs
+        产物；spec.py/emit.py/source.py/grid.py
+        零改动；PROCESSING_VERSION=2（spec.py:37）；emit.py MAX_DIRECT_PIXELS
+        报错分支原样；独立复跑 tests/unit 全量 102 用例 0.368s OK，与 Runtime 记录 ba8c246e（102 用例
+        0.313s OK，evidenceDigest 在 state.json）一致
+      truncated: false
+  - id: A5
+    source: specs/p2-batch-export/spec.md
+    text: 映射与持久化的离线单测（验收：A5） `tests/unit` 新增离线用例覆盖纯逻辑：GEE 六态 →
+      五态映射表逐项断言（含未知状态不误判）；`jobs.json` 保存 / 加载 / 未终态恢复往返保真；取消联动判定（export + task
+      id 存在才触发 GEE 取消）；导出参数校验（folder 默认 `gexports` 与透传、file_format / shard_size
+      / file_dimensions / max_pixels 非法值拒绝）。全部用例不导入 ee、不联网、秒级完成，纳入既有离线基线一并回归。
+    result: passed
+    reason:
+      text: tests/unit/test_export_jobstore.py 31
+        用例覆盖全部枚举项：六态映射逐项+未知/None/大小写不误判（TaskStateMapTest）、folder 默认 gexports
+        与透传、file_format/shard_size/max_pixels/file_dimensions
+        非法值拒绝与透传（ExportParamsTest，含 max_pixels）、spec
+        必填（ValidateExportSpecTest）、取消联动判定（CancelCouplingTest）、持久化保存/加载/恢复往返/损坏降级/原子写/仅
+        export 入档（JobstoreTest）；本轮新增 PollFailureStreakTest 恰 2 用例（计数递增进
+        message、reset 清零）；冒烟确认 import gis.export/jobstore 后 sys.modules 无 ee，离线
+        0.3s 级
+      truncated: false
+  - id: A6
+    source: specs/p2-batch-export/spec.md
+    text: 写操作走 daemon（验收：A6） 批处理导出的提交 / 查询 / 取消仅经 daemon 暴露：MCP
+      `job_submit(kind="export")`、RPC `job.submit`、HTTP 路由行为一致；TUI 与 client
+      侧无任何直接 GEE 调用路径；任务状态变化经既有 SSE 事件流推送。
+    result: passed
+    reason:
+      text: daemon.py 中 MCP 派发（407-413）、HTTP 路由（535-565）与 RPC（593-599）共用
+        act_job_submit/act_job_get/act_job_cancel 同一 act 面；MCP_TOOLS job_submit
+        schema kind enum 含 export 及全部导出参数；grep 确认 gis/client.py 与 gis/tui.py 无任何
+        GEE 调用且零改动；export 轮询状态变化经 JOBS.emit 走既有 SSE 事件流
+      truncated: false
+  - id: A7
+    source: specs/p2-batch-export/spec.md
+    text: 取消联动（验收：A7） 对未终态 export job 调 `job_cancel`：本地协作取消发出，同步调用 GEE
+      `task.cancel()`；GEE 侧进入 CANCELLED 后本地收敛到 cancelled 终态。对已终态 job
+      取消请求被拒绝（与既有行为一致）；对非 export job 不产生 GEE 调用。
+    result: passed
+    reason:
+      text: act_job_cancel 对 should_cancel_gee（未终态+task_id 的 export）联动
+        cancel_gee_task（ee.data.cancelTask，D7 接口），GEE 取消失败仅记 warning 不回滚本地取消；实测
+        j_d2f0c3d6 本地 cancelled，本轮只读复核 GEE 侧
+        S3ESI2YKUM5FOBB6C2AGNRNV=CANCELLED（Cancelled.），两侧收敛一致；已终态 job 取消被
+        JOBS.cancel 拒绝（KeyError，既有行为），非 export job 不触发 GEE 调用（CancelCouplingTest
+        断言）
+      truncated: false
+builder_handoff:
+  candidate_id: 726f6b5d-5e14-42a4-94b6-0806e639444c
+  identity_provider: skill-coordinated
+  builder_execution_ref: skill-coordinated:builder:2f8ce4d2-e358-49d5-8640-14e899e3717d
+  iteration: 3
+  summary:
+    text: 实现轮 3（风险处置轮，需求范围不变）：用户要求修复上一轮 Verifier 留痕的 4 条风险。①风险②（恢复场景终态收敛滞后）——把 spec
+      已确认文字「连续失败在 job.message 中如实报错」落实为带连续失败计数的报错：export.py 新增
+      note_poll_failure/reset_poll_failure
+      纯函数，线程轮询路径（run_export）与恢复轮询路径（daemon._poll_tick）共用，查询成功即清零；权限传播这类分钟级窗口内用户能看到连续第
+      N 次重试而非冻结旧消息（滞后本身源于 GEE 侧权限传播，外部不可消除，已如实观测）。②风险①（一次性读到 98 用例陈旧计数）——根因为陈旧
+      __pycache__ 字节码，已清理 worktree 全部字节码缓存并三次复跑确认 102 用例稳定全绿。③风险③（Drive
+      产物文件级核验）——需 Drive API OAuth，属范围外外部前提，维持 GEE COMPLETED + destination_uris
+      为程序化证据（known_limits
+      说明）。④风险④（verification.md）——由归档流程在接受结果后自动生成。改动面：gis/export.py（+2 纯函数 +2
+      调用点）、gis/daemon.py（调用点替换）、tests/unit/test_export_jobstore.py（+2 用例）；全量 102
+      用例（71 基线 + 31 新增）0.30s 全绿 ×3；A1/A2/A4/A6/A7 及串行试点证据沿用（候选其余部分与上轮冻结版本一致）。
+    truncated: false
+  addressed_acceptance_ids:
+    - A1
+    - A2
+    - A3
+    - A4
+    - A5
+    - A6
+    - A7
+  acceptance_review:
+    - id: A1
+      status: implemented-with-evidence
+      evidence:
+        - 试点实测：daemon(端口6532) POST /job kind=export，spec 网格约 1.15 亿像素（>
+          64M，getDownloadURL 路径会拒绝的量级）——job j_d2f0c3d6 提交成功，GEE task
+          S3ESI2YKUM5FOBB6C2AGNRNV，job_get 可查询且 phase=已提交、message 含 task id
+        - job result 记录
+          destination=Drive/gexports/s2_pilot_big.6ffc30ee*、max_pixels=115021604
+        - file 出口 64M 超限报错路径未动：git diff 显示 gis/emit.py 零改动（MAX_DIRECT_PIXELS
+          分支原样）
+        - tests/unit/test_export_jobstore.py：spec
+          必填与提交参数校验用例（ExportParamsTest/ValidateExportSpecTest）
+      note: ">64M AOI 可提交、可查询实测通过；task id 经 ee.data.getTaskStatus
+        独立复核（CANCEL_REQUESTED，后经取消联动收敛）。"
+    - id: A2
+      status: implemented-with-evidence
+      evidence:
+        - 试点实测：小任务（约 10.5 万像素，spec s2_pilot_small，job j_dc695981）串行提交——GEE task
+          UBKXBJUFJJEFVEK4B4K6EX7H → state COMPLETED（ee.data.getTaskStatus
+          独立复核）→ 本地 status=done、pct=100
+        - job result 含
+          task_id、description=geocode-j_dc695981、folder=gexports、file_prefix=s2_pilot_small.2661d6de、destination=Drive/gexports/s2_pilot_small.2661d6de*、destination_uris=[https://drive.google.com/#folders/1ib620i3aJvI-8lz2CHvJZ-s2KR2lIKVo]（GEE
+          返回的 Drive 文件夹链接）
+        - 本地 DONE 仅在 GEE COMPLETED 后出现（finalize/run_export 仅以 COMPLETED
+          收敛，D4）；全程无第二个并行任务（红线 6：大任务在小任务 COMPLETED 并核实后才提交）
+      note: 提交→RUNNING→COMPLETED→产物在 Drive 完整闭环；Drive 文件夹内容可由用户在 Drive 网页按 file_prefix
+        目视复核（destination_uris 已在 result）。
+    - id: A3
+      status: implemented-with-evidence
+      evidence:
+        - 试点实测（两次 daemon 重启）：重启前 job j_dc695981 处于 running，.cache/jobs.json
+          持久化记录含 task_id=UBKXBJUFJJEFVEK4B4K6EX7H 与完整 spec；重启后 _restore_jobs 经
+          JOBS.adopt 恢复、job_list/job_get 可见，后台轮询按 GEE 真实状态推进至 done（result 补
+          gee_state=COMPLETED 与 destination_uris）
+        - 诚实降级观察：第一次重启时查询接口有 bug（ee.batch.Task 无法按 id 重建），轮询失败仅记 message='GEE
+          查询失败（下轮重试）'，不误标终态；修复（ee.data.getTaskStatus）后同任务收敛 done
+        - .cache/jobs.json 终态：j_dc695981=done、j_d2f0c3d6=cancelled，记录完整
+        - tests/unit/test_export_jobstore.py::JobstoreTest（保存/加载/恢复往返、损坏降级、原子写、仅
+          export 入档）+ JobsRegistryTest（adopt/emit/thread_alive）
+      note: 重启前提交的未终态导出任务，重启后可见且状态按 GEE 侧真实进度推进；describe/defaults/emit 不入档。
+    - id: A4
+      status: implemented-with-evidence
+      evidence:
+        - git diff（worktree）：gis/spec.py、gis/emit.py、gis/source.py、gis/grid.py
+          零改动；PROCESSING_VERSION 仍为 2
+        - tests/unit 全量 102 用例（71 基线 + 31 新增）0.30s 全绿、离线（geo env，unittest
+          discover），清理陈旧字节码缓存后三次复跑计数稳定
+        - file 出口 MAX_DIRECT_PIXELS 报错分支、_ensure_raster 缓存、三出口 dispatch
+          原样保留（emit.py 未动）
+      note: 三出口与离线基线零回归；未新增 spec 字段，指纹白名单未触碰（红线 8 以导出参数全走 job 提交满足，D3）。
+    - id: A5
+      status: implemented-with-evidence
+      evidence:
+        - tests/unit/test_export_jobstore.py 现共 31
+          用例：六→五态映射（TaskStateMapTest）、参数校验
+          folder/file_format/shard_size/max_pixels/file_dimensions（ExportParamsTest，含上轮补的
+          max_pixels 拒绝与透传）、spec
+          必填（ValidateExportSpecTest）、取消判定（CancelCouplingTest）、持久化往返/损坏降级/原子写/仅
+          export 入档（JobstoreTest）、getTaskStatus
+          错误形态（FormatGeeErrorTest）、连续失败计数与清零（PollFailureStreakTest，本轮新增）、adopt/emit/task_id（JobsRegistryTest）
+        - 本轮新增（风险②）：note_poll_failure 连续计数进 message（含「连续第 N
+          次」）、reset_poll_failure 成功清零——把 spec「连续失败如实报错」落实完整
+        - 全量 102 用例（71 基线 + 31 新增）0.30s 全绿 ×3、离线；冒烟：import
+          gis.{daemon,export,jobstore} 后 sys.modules 无 ee
+      note: 验收文字列举的全部纯逻辑均有离线单测覆盖；本轮额外把「连续失败如实报错」落实为带计数版本并有测试。
+    - id: A6
+      status: implemented-with-evidence
+      evidence:
+        - gis/daemon.py：act_job_submit 的 KIND_EXPORT 分支（校验 + submit_params
+          前移快速失败）、act_job_cancel 联动、_poll_tick/_start_poller 经 JOBS.emit
+          走既有事件流、MCP_TOOLS job_submit schema 扩展（kind enum 含 export +
+          folder/file_prefix/file_format/shard_size/file_dimensions/max_pixels）
+        - 试点全程经 daemon 调用面执行：POST /job 提交、GET /job/<id> 查询、POST /job/<id>/cancel
+          取消（响应含 gee_cancelled）；/rpc job.submit 与 HTTP 复用同一 act_job_submit
+        - git status：tui.py / client.py 零改动；gis/export.py 仅被 daemon 与 tests/unit
+          引用
+      note: 提交/查询/取消全走 daemon；TUI 经既有轮询自然可见，无直接 GEE 调用路径。
+    - id: A7
+      status: implemented-with-evidence
+      evidence:
+        - "试点实测：对 RUNNING 的大任务 j_d2f0c3d6 调 POST /job/<id>/cancel —— 响应
+          {cancelled, gee_cancelled: true}；本地立即收敛 cancelled
+          终态；ee.data.getTaskStatus 独立复核 GEE 侧 CANCEL_REQUESTED（取消已受理）"
+        - "gis/daemon.py: act_job_cancel 联动 + cancel_gee_task 失败时记 job.warning
+          不回滚本地取消"
+        - tests/unit/test_export_jobstore.py::CancelCouplingTest：未终态 + task_id 的
+          export 才联动；终态/其他 kind/无 task_id 不碰 GEE
+      note: 取消联动实测通过；GEE 侧 CANCEL_REQUESTED→CANCELLED 为服务端异步收敛。
+  checks:
+    - name:
+        text: tests/unit 全量离线回归
+        truncated: false
+      result: passed
+      note:
+        text: 102 用例（71 基线 + 31 新增），0.30s，OK ×3 次复跑（清理陈旧 __pycache__ 后计数稳定——风险①处置）
+        truncated: false
+    - name:
+        text: 导入与调用面冒烟
+        truncated: false
+      result: passed
+      note:
+        text: gis.daemon/export/jobstore 全链导入且 ee 未加载；export+exit 冲突被拒；缺 asset
+          报可执行错误；folder 默认/透传正确；MCP kind enum 含 export
+        truncated: false
+    - name:
+        text: 红线 6 串行试点（GEE 实网）
+        truncated: false
+      result: passed
+      note:
+        text: 2 个任务串行：小任务（10.5 万像素）提交→RUNNING→COMPLETED→本地 done，result 含 Drive
+          destination_uris；大任务（1.15 亿像素）提交可查询后取消（gee_cancelled=true，GEE
+          CANCEL_REQUESTED，本地 cancelled）；期间两次 daemon 重启验证恢复
+        truncated: false
+    - name:
+        text: 接口事实核验（ee 1.7.46）
+        truncated: false
+      result: passed
+      note:
+        text: ee.batch.Task(task_id) 重建报 TypeError（缺 task_type/state）→ 改用
+          ee.data.getTaskStatus/cancelTask；裸 ee.Initialize() 清空
+          _cloud_api_user_project 导致查询权限错 → 已移除并在代码注释警示
+        truncated: false
+    - name:
+        text: 风险处置核验
+        truncated: false
+      result: passed
+      note:
+        text: 风险①：陈旧 __pycache__ 已清理 + 3 次复跑计数稳定 102；风险②：连续失败计数实现并有单测（滞后根因=GEE
+          权限传播，外部不可消除，观测性已补齐）；风险③：Drive 文件级核验需 Drive API OAuth（范围外，见
+          known_limits）；风险④：verification.md 由归档流程生成
+        truncated: false
+  checks_truncated: false
+  known_limits:
+    - text: Drive 产物证据形态：GEE task COMPLETED + result.destination_uris（GEE 返回的 Drive
+        文件夹链接）为程序化证据；文件夹内文件可由用户在 Drive 网页按
+        file_prefix（s2_pilot_small.2661d6de*）目视复核——本机未配置 Drive API，不做桶内清单式断言
+      truncated: false
+    - text: 大试点任务已取消（CANCEL_REQUESTED→GEE 异步收敛 CANCELLED），不产生完整产物——A1
+        验收止于可提交/可查询（台账措辞如此）
+      truncated: false
+    - text: 试点经环境变量 GEE_PROJECT 注入项目（worktree 的 geocode.json 为占位模板）；主工作区 geocode.json
+        已含真实项目 ID，生产路径不受影响
+      truncated: false
+    - text: 集成提示：gis/daemon.py 与 C3
+        p2-timeseries（主工作区未提交改动）有交叠，合并时按仓库实际内容解决；gis/jobs.py 改动均为增量字段/方法，冲突风险低
+      truncated: false
+    - text: ee.data.getTaskStatus 对已归档/过期任务的保留时长由 GEE 侧决定；极端情况下按 state=None 如实降级（不猜）
+      truncated: false
+    - text: 风险③处置边界：Drive 产物文件级核验需要 Drive API OAuth 授权（用户侧前提，范围外）；当前程序化证据 = GEE task
+        COMPLETED + result.destination_uris（GEE 返回的 Drive 文件夹链接），文件夹内容可由用户网页目视复核
+      truncated: false
+  known_limits_truncated: false
+  review: null
+  submitted_at: 2026-10-06T17:18:42.515Z
+blockers: []
+verification:
+  candidate_id: 726f6b5d-5e14-42a4-94b6-0806e639444c
+  identity_provider: skill-coordinated
+  verifier_execution_ref: skill-coordinated:verifier:df6f5da0-925e-48e3-a0b6-85eada391c72
+  iteration: 3
+  attempt: 1
+  assurance: skill-coordinated
+  verdict: pass
+  checks:
+    - id: vc-unit-offline
+      name:
+        text: tests/unit 离线全量回归
+        truncated: false
+      argv_display:
+        - text: -m
+          truncated: false
+        - text: unittest
+          truncated: false
+        - text: discover
+          truncated: false
+        - text: -s
+          truncated: false
+        - text: tests/unit
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 638
+  summary:
+    text: iteration 3 风险处置轮验收 7/7
+      passed，verdict=pass。本轮改动核验：note_poll_failure/reset_poll_failure 两个纯函数已落地
+      export.py（连续失败计数进 job.message、成功清零），线程轮询路径 run_export（query 异常分支
+      continue、成功分支先 reset）与恢复轮询路径
+      daemon._poll_tick（同样两分支）两处调用点共用同一实现，PollFailureStreakTest 恰 2
+      用例覆盖计数递增与清零；风险①陈旧 __pycache__ 已清理并以独立复跑证实 102 用例稳定（陈旧 98 用例日志 a4c25031
+      已被当前 state.json 引用的 ba8c246e 取代）。其余实现与 iteration 2 冻结候选一致：A4
+      零改动面（spec/emit/source/grid 未动、PROCESSING_VERSION=2）、A1/A2/A7 经本轮
+      ee.data.getTaskStatus 只读复核 GEE 真值与本地持久化一致（COMPLETED↔done 带
+      destination_uris、CANCELLED↔cancelled）、A6 三调用面共用 act 函数且 client/tui 无 GEE
+      调用、A3 持久化与恢复链路完整、A5 离线单测全覆盖且不加载 ee。绑定标识
+      candidateId/verifierExecutionRef/iteration 3/attempt 1/stateVersion 18
+      全程一致
+    truncated: false
+  risks:
+    - text: Drive 产物文件级核验（风险③）仍属范围外外部前提：需 Drive API OAuth；程序化证据为 GEE task COMPLETED +
+        result.destination_uris（本轮只读复核仍有效），文件夹内文件需用户按 file_prefix 在 Drive 网页目视复核
+      truncated: false
+    - text: .cache/jobs.json 中 j_dc695981.message
+        保留旧格式（无连续计数）的轮询失败文本——运行态历史数据而非候选文件缺陷；此后新失败将带本轮新增的（连续第 N 次）计数
+      truncated: false
+    - text: gis/daemon.py 与 C3 p2-timeseries（主工作区未提交改动）存在交叠，合并时需按仓库实际内容解决（builder
+        known_limits 已如实记录）
+      truncated: false
+  risks_truncated: false
+  completed_at: 2026-10-06T17:26:20.945Z
+history:
+  - goal_cycle: 1
+    iteration: 1
+    attempt: 0
+    outcome: recovery
+    unresolved_ids: []
+    summary:
+      text: Native confirmed acceptance criteria changed
+      truncated: false
+    completed_at: 2026-10-06T14:11:44.823Z
+  - goal_cycle: 2
+    iteration: 1
+    attempt: 0
+    outcome: recovery
+    unresolved_ids: []
+    summary:
+      text: Native Shape artifacts changed
+      truncated: false
+    completed_at: 2026-10-06T16:41:07.042Z
+  - goal_cycle: 3
+    iteration: 1
+    attempt: 1
+    outcome: fail
+    unresolved_ids:
+      - A5
+    summary:
+      text: 实现完整、证据扎实：6/7 通过。A1（>64M 提交/查询）、A2（小任务闭环）、A7（取消联动）经 Verifier 用
+        ee.data.getTaskStatus 对 GEE 实网独立复核，本地状态与 GEE 真值一致；A3 恢复机制与真实持久化记录的
+        restore 保真核验通过；A4 零改动面确认、98 例离线全量回归全绿（复跑与 Runtime 记录一致）；A6 三调用面一致且
+        client/TUI 无直接 GEE 调用。唯一失败项 A5：spec/brief 明确列举的 max_pixels
+        非法值拒绝缺离线单测（实现校验分支在、测试断言缺，grep tests/ 零命中），补一条断言即可修复进入下一轮。
+      truncated: false
+    completed_at: 2026-10-06T16:56:27.709Z
+  - goal_cycle: 3
+    iteration: 2
+    attempt: 1
+    outcome: pass
+    unresolved_ids: []
+    summary:
+      text: iteration 2 修复轮验收 7/7 通过，综合 verdict=pass。A5 修复点核实：ExportParamsTest 补齐
+        test_bad_max_pixels_rejected 与
+        test_max_pixels_passthrough，全部枚举项（六态映射逐项+未知不误判、持久化往返、取消判定、folder/file_format/shard_size/max_pixels/file_dimensions
+        校验）均有离线用例，100 用例（71 基线+29 新增）离线全绿且经独立三次复跑与 verbose 按名确认。其余实现与 iteration
+        1 冻结候选一致（git diff 仅 daemon/jobs/.gitignore + 三个新文件；spec/emit/source/grid
+        零改动、PROCESSING_VERSION=2）。GEE 侧真值只读复核与本地 .cache/jobs.json 一致：小任务
+        COMPLETED↔done（result 含 folder/file_prefix/destination_uris）、大任务
+        CANCELLED↔cancelled（取消联动两侧收敛）。MCP/RPC/HTTP 共用同一 act 面，tui/client 无直接 GEE
+        调用。D10（toDrive）、D7（getTaskStatus/cancelTask 直连）、D8（红线 5 不外推，region 用
+        source.to_ee_geometry）在实现中如实落地。
+      truncated: false
+    completed_at: 2026-10-06T17:11:44.731Z
+  - goal_cycle: 3
+    iteration: 2
+    attempt: 1
+    outcome: recovery
+    unresolved_ids: []
+    summary:
+      text: 用户要求修复 Verifier 留痕风险，从 Verify 回 Build 做实现修订（需求范围不变，7 项验收文字不变）：①风险②修复——把
+        spec 已确认文字「连续失败在 job.message
+        中如实报错」落实为带连续失败计数的报错（note_poll_failure/reset_poll_failure
+        纯函数，线程路径与恢复轮询路径共用），并在轮询成功收敛时清零；②风险①处置——清理 worktree 陈旧
+        __pycache__（首轮验收一次性读到 98 用例计数的根因是陈旧字节码），并在交接检查中记录多次复跑稳定计数；③风险③（Drive
+        产物文件级核验需 Drive API OAuth）与④（verification.md 由归档流程生成）为范围外/自动解决，在交接
+        known_limits 说明。本轮实现改动仅 export.py（+纯函数与调用点）与测试（新增用例），A1–A7 其余证据沿用。
+      truncated: false
+    completed_at: 2026-10-06T17:16:43.942Z
+  - goal_cycle: 3
+    iteration: 3
+    attempt: 1
+    outcome: pass
+    unresolved_ids: []
+    summary:
+      text: iteration 3 风险处置轮验收 7/7
+        passed，verdict=pass。本轮改动核验：note_poll_failure/reset_poll_failure 两个纯函数已落地
+        export.py（连续失败计数进 job.message、成功清零），线程轮询路径 run_export（query 异常分支
+        continue、成功分支先 reset）与恢复轮询路径
+        daemon._poll_tick（同样两分支）两处调用点共用同一实现，PollFailureStreakTest 恰 2
+        用例覆盖计数递增与清零；风险①陈旧 __pycache__ 已清理并以独立复跑证实 102 用例稳定（陈旧 98 用例日志 a4c25031
+        已被当前 state.json 引用的 ba8c246e 取代）。其余实现与 iteration 2 冻结候选一致：A4
+        零改动面（spec/emit/source/grid 未动、PROCESSING_VERSION=2）、A1/A2/A7 经本轮
+        ee.data.getTaskStatus 只读复核 GEE 真值与本地持久化一致（COMPLETED↔done 带
+        destination_uris、CANCELLED↔cancelled）、A6 三调用面共用 act 函数且 client/tui 无 GEE
+        调用、A3 持久化与恢复链路完整、A5 离线单测全覆盖且不加载 ee。绑定标识
+        candidateId/verifierExecutionRef/iteration 3/attempt 1/stateVersion 18
+        全程一致
+      truncated: false
+    completed_at: 2026-10-06T17:26:20.945Z
+history_overflow:
+  dropped_entries: 0
+  first_dropped_at: null
+  last_dropped_at: null
+  outcome_counts:
+    pass: 0
+    fail: 0
+    blocked: 0
+    execution-error: 0
+    recovery: 0
+verification_result: pass
+verification_report: verification.md
+archived: true
+created_at: 2026-10-06T12:48:06.200Z
