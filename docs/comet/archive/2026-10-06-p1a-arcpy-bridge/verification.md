@@ -1,0 +1,75 @@
+---
+generated_from_state_version: 22
+---
+
+# 验证
+
+## 当前结果
+
+- 结果: **已归档**
+- 验证情况: **已完成检查，验证结果已确认**
+- 目标周期: 2
+- 迭代: 3
+- 验证器尝试次数: 1
+- 完成时间: 2026-10-06T10:47:29.432Z
+- 摘要: 独立复核第 4 轮（repair iteration 3）提交，结论 pass。3 条风险的最优解修复全部以代码审查+现场证据证实：修复 1 的 CIM 样式路径与任务给定一致且从落盘 .aprx 读回验证持久化（经纬线白 0.8pt/比例尺黑 1.2pt/纬线标注白字）；修复 2 的细分格比例尺算法（6 候选就近 G0/4、n 截断 2-10、页宽守卫、逐半格刻度、1/2/5 整值标注、端点带单位）在 n=5 实例上完整核验，Builder 自查发现的 n 奇数端点覆盖 bug 修复成立（2000 与 2500 m 并存）；修复 3 的旧注释已清零。A1 双出图六件产物新鲜落盘，A2 五要素程序化+人工双确认，A3/A4 契约与纪律未回归，A5 71 单测 0.25s 全绿，A6 指纹/零改动/零新包红线全部守住。arcpy 冒烟仅消耗 1 次（27s），残余风险均为已知取舍，无新增风险。
+
+## 验收
+
+| 编号 | 结果 | 来源 | 验收项 | 原因 |
+| --- | --- | --- | --- | --- |
+| A1 | passed | specs/p1a-arcpy-bridge/spec.md | 同一 GeoTIFF 双出图（验收：A1） 给定同一 spec（含 LayoutSpec）与其 GeoTIFF（优先复用 P0 缓存产物，指纹 `c9243efd`；缺失时经 emit_file 现场生成）：`emit_map(renderer="qgis")` 与 `emit_map(renderer="arcpy")` 各产出一张图，均成功落盘 `data/deliver/`；qgis 路径产出 `.qgz` + PNG（现状格式），arcpy 路径产出 `.aprx` + PDF + PNG。 | 以完全相同的 spec（graticule LayoutSpec 变体，指纹 c9243efd40318c85）现场各跑一次双 renderer 冒烟（qgis 5.2s / arcpy 27.0s，全程离线命中 _ensure_raster 缓存）：qgis 落盘 .qgz+PNG（data/deliver/s2_beijing_test.c9243efd.qgz/.png，qgis_layout 名称已回读），arcpy 落盘 .aprx+PDF+PNG（.aprx/.layout.pdf/.layout.png），六件产物均在 data/deliver/ 且时间戳为本轮验证新鲜写入；本轮 Runtime 标准变体冒烟（smoke-map-qgis 5335ms / smoke-map-arcpy 26632ms）亦全部 passed，标准行为无回归。 |
+| A2 | passed | specs/p1a-arcpy-bridge/spec.md | arcpy 出版图五要素（验收：A2） arcpy 路径产出的 layout 包含标题 / 比例尺 / 指北针 / 图例 / 图廓五要素（arcpy 程序化列元素名断言）；`.aprx` 可被 arcpy 打开，PDF 与 PNG 文件存在、尺寸合理（dpi 遵循 LayoutSpec，默认 300），人工可读、可直接进论文。 | 用 arcgispro-py3 只读打开落盘 .aprx 成功（map=geocode，layout=『北京 S2 真彩色（C2 验收）』，页 29.7×21.0cm）；列元素核验五要素齐备：MapFrame geocode-mapframe（图廓）、LegendElement、MapSurroundElement North Arrow、TextElement 标题、比例尺图形组。修复 1 核实：_style_line/_style_text 的 CIM 路径与任务给定一致（线=graphic.symbol.symbol.symbolLayers；文本=CIMTextSymbol.symbol→symbolLayers），且从保存后的 .aprx 读回证实样式已持久化——12 条经纬线全部 0.8pt 白(255,255,255)、比例尺 7 条线（主线+6 个半格刻度）全部 1.2pt 黑(0,0,0)、4 个纬度标注读回白色、8 个经度标注黑字（底轴白底带）。修复 2 核实：代码候选集 6 个（1/2/5×mag + 1/2/5×10mag 就近 G0/4）、n=clamp(round(G0/half),2,10)、页宽守卫（max_L=w-3*inset-col 减格数）均正确；n=5/half=500 实例现场核验——刻度逐半格、标注全为 1/2/5 整值（0/1000/2000）、端点自带单位（2500 m）；n 奇数分支为追加而非覆盖，『2000』标注完好独立存在，Builder 自查的端点覆盖 bug 修复成立；条长约 4.3cm 对目标 4cm（+8%）。修复 3 核实：graticule 块注释已改为度标注现状描述（经线底轴黑字/纬线白字），全仓 grep『不做度标注』0 命中。PNG 3508×2480=A4 横版@300dpi（dpi 遵循 LayoutSpec），PDF 4.7MB/PNG 2.4MB；人工目检出版图可读、可直接进论文。 |
+| A3 | passed | specs/p1a-arcpy-bridge/spec.md | LayoutSpec 契约共享（验收：A3） `LayoutSpec` 为 frozen dataclass，含 `to_dict` / `from_dict` JSON 往返保真；`qgis_bridge` 与 `arcpy_bridge` 均从 `ArtifactSpec.layout` 读取呈现规格，不允许各自私有的布局参数定义；单测覆盖构造、默认值（四要素开、graticule 关、dpi 300、scalebar_length_cm 4.0、formats pdf+png）与往返。 | LayoutSpec 为 frozen dataclass，to_dict/from_dict 往返保真（gis/spec.py L113-190），scalebar_length_cm 默认 4.0、校验 0<x≤30；单测覆盖默认值（四要素开/graticule 关/dpi300/formats pdf+png/scalebar_length_cm 4.0）、非法值拒绝（含 0/-2/99）、完整与部分往返，71 用例全绿；两 bridge 均从 ArtifactSpec.layout 消费（emit.py L395/L412 传 spec.layout，两侧脚本只读 LayoutSpec.to_dict 透传字段，无私有布局 schema）；本轮改动仅 arcpy 脚本呈现层与测试，契约层未触碰。 |
+| A4 | passed | specs/p1a-arcpy-bridge/spec.md | renderer 纪律（验收：A4） `emit_map` 的 `renderer` 接受 `"qgis"` 与 `"arcpy"`；默认 `"qgis"`；非法值抛出可读错误（列出合法值）。`renderer="qgis"` 且无 layout 时行为与现状完全一致（现有输出不回归）。**nolayout 语义统一**：`layout` 缺席时两 renderer 都不创建布局——arcpy 路径产 map-only `.aprx`（无布局、无 PDF/PNG 导出），qgis 路径维持 P0 三件套。 | RENDERERS=(qgis,arcpy)；现场验证非法值 renderer='mapbox' 在触碰数据前抛可读 ValueError『renderer=mapbox 不认识。可选：qgis, arcpy。』；Job 未填 renderer 时缺省解析为 qgis；nolayout 语义统一（arcpy：has_layout=False 时只产 map-only .aprx、无布局无导出；qgis：无 lay_cfg 不建布局、维持 P0 三件套），本轮 diff 未触碰该逻辑，与第 3 轮验收结论一致。 |
+| A5 | passed | specs/p1a-arcpy-bridge/spec.md | C1 回归基线（验收：A5） `C:/ProgramData/miniforge3/envs/geo/python.exe -m unittest discover -s tests/unit` 在仓库根全部通过（含 LayoutSpec 新用例与更新后的指纹守卫），运行时长 < 10 秒，全程无网络访问。 | geo env 现场复跑 C:/ProgramData/miniforge3/envs/geo/python.exe -m unittest discover -s tests/unit：Ran 71 tests, OK（0.251s，墙钟约 0.65s），纯契约离线单测、无网络访问。 |
+| A6 | passed | specs/p1a-arcpy-bridge/spec.md | 指纹与资产保护（验收：A6） 新增 `layout` 字段后，旧 spec（不含 layout）的 `fingerprint()` 保持不变（守卫名单更新 + 回归断言）；`source.py` / `grid.py` 零改动；`PROCESSING_VERSION` 保持 2；`arcgispro-py3` 环境不被安装任何新包（subprocess + 文件交换，红线 7）。 | 现场重算冒烟 spec 指纹=c9243efd40318c85 不变，且含/不含 LayoutSpec 指纹相同（守卫名单 EXCLUDED_FIELDS 含 layout + test_meta_fields_do_not_change_fingerprint 回归断言在案）；git status/diff 证实 gis/source.py 与 gis/grid.py 零改动；PROCESSING_VERSION=2；arcgispro-py3 无任何安装调用（全仓 grep 仅 preflight.py 的建议文案，且指向 geo env），conda list 显示 dask/xarray 均为 esri 官方 channel 预装（dask Required-by arcgis，google-crc32c 为 Esri 自带 zarr 的依赖），无 earthengine-api/geemap/google-auth 等 GEE 栈新包。 |
+
+## 检查
+
+| 检查 | 命令 | 工作目录 | 状态 | 退出码 | 耗时 |
+| --- | --- | --- | --- | ---: | ---: |
+| unit-tests-offline | -m unittest discover -s tests/unit | . | passed | 0 | 607 ms |
+| smoke-map-qgis | tests/smoke_map_renderers.py qgis | . | passed | 0 | 5335 ms |
+| smoke-map-arcpy | tests/smoke_map_renderers.py arcpy | . | passed | 0 | 26632 ms |
+
+### Builder 报告的证据
+
+以下为 Builder 报告，不等同于 Runtime 检查凭据或独立验收结果。
+
+- unittest 全套（geo env，修复轮 3）: passed — 71 用例 OK，0.272s
+- arcpy 标准 + graticule 冒烟（开发期）: passed — 两变体产物齐全；比例尺 0/1000/2000/2500 m（细分格）目检正确；白线/白字/黑字样式落位
+- 已知限制: 比例尺总长为半格距整值×格数，与 scalebar_length_cm 目标存在约 ±10% 内偏差（半格级），取舍为全部标注保持 1/2/5 整值可读。
+- 已知限制: 自绘符号样式为硬编码选择（白线 0.8pt / 黑线 1.2pt / 7-8pt Arial）；LayoutSpec 暂无样式粒度配置，可按需扩展。
+- 已知限制: Pro 3.7 的 GRID surround 与 SCALE_BAR division 均有运行时缺陷（probe 在案），自绘是绕行方案；Pro 后续版本修复后可切回原生 surround。
+- 已知限制: QGIS 经纬网用原生 QgsLayoutItemMapGrid（含自身标注样式）；arcpy 自绘经纬网标注位置为线性映射近似（小范围内投影非线性可忽略）。
+- 已知限制: smoke 脚本 stderr 末尾可能有无害的 shutdown 提示（exit code 0）。
+
+## 阻塞项
+
+_无。_
+
+## 风险与跳过的工作
+
+- 比例尺总长为半格距整值×格数，与 scalebar_length_cm 目标存在 ±10% 内偏差（本例 +8%），属保持全部标注 1/2/5 整值的既定取舍（known_limits 在案，非本轮新引入）
+- 自绘符号样式为硬编码选择（白 0.8pt/黑 1.2pt/7-8pt Arial），LayoutSpec 暂无样式粒度配置（known_limits 在案）
+- 自绘经纬网用两点直连投影线性化，小范围弯曲可忽略；大范围或高纬场景误差会增大，且经纬网共用同一 dstep
+- Pro 3.7 的 GRID surround 与 SCALE_BAR division 运行时缺陷有探针在案，自绘为绕行方案，与 Pro 版本行为绑定（Pro 升级需复验）
+
+## 之前的迭代
+
+| 目标周期 | 迭代 | 尝试 | 结果 | 未解决项 | 摘要 | 完成时间 |
+| ---: | ---: | ---: | --- | --- | --- | --- |
+| 1 | 1 | 1 | pass | — | 独立验收全部 6 项通过。核心证据均由本 Verifier 现场重新产生而非采信 Builder：双 renderer 冒烟复跑（离线缓存命中，指纹三方一致 c9243efd40318c85）；用 arcgispro-py3 的 arcpy 亲自打开 .aprx 程序化断言五元素类型与内容（标题文本、0/1000/2000m 比例尺、North Arrow、Legend、MapFrame 图廓）并目检出版图（A4@300dpi 精确对应 3508x2480，PDF MediaBox A4 landscape）；LayoutSpec frozen/往返/共享消费逐点核验；71 单测 0.68s 全绿；git 证据链确认 source.py/grid.py 零改动、PROCESSING_VERSION=2、arcgispro-py3 零新包。两处最小修复（qgis_bridge import sys、_apply_colormap NaN 归零）评估合理：均在显示/异常回退路径，crash→可用，不影响分析像素输出，PROCESSING_VERSION 不动成立。known_limits（graticule 不对称、自绘比例尺来历、arcpy nolayout 默认布局）已如实记录。 | 2026-10-06T08:08:40.402Z |
+| 1 | 1 | 1 | recovery | — | 用户要求修复 C2 验收 5 条残余风险：残余 1（graticule 不对称）——QGIS 路径用 QgsLayoutItemMapGrid 实现经纬网，消除与 arcpy 的不对称；残余 2（比例尺长度不可配置）——LayoutSpec 新增 scalebar_length_cm 字段（默认 4.0cm，校验 >0），arcpy 自绘比例尺按其取目标长度，单测覆盖默认/校验/往返；残余 3（nolayout 不对称）——语义统一：layout 缺席时两 renderer 都不创建布局（arcpy 产 map-only aprx，无 PDF/PNG 导出；qgis 保持现状不建布局）；残余 4（frame=False 未消费）——arcpy 通过 CIM 关闭地图框边框（实现前先探针定位 CIM 字段），QGIS 已支持；残余 5（调试 PDF 残留）——已在验收后清理，无代码改动。同步更新 brief 交付内容 1 的 LayoutSpec 字段枚举、spec A3/A4 场景文字。 | 2026-10-06T08:14:43.572Z |
+| 2 | 1 | 1 | pass | — | 第 2 轮独立验收：6/6 项全部通过，5 条残余风险的修复均以代码+运行时双重证据确认落地。R1：交付 .qgz 解包证实 <ComposerMapGrid name='geocode-graticule'> CRS=EPSG:4326、intervalX/Y=0.02 度，arcpy 侧无 GRID surround 调用残留（仅注释提及）、有完整自绘经纬网实现；R2：LayoutSpec.scalebar_length_cm 默认 4.0/校验 0<x≤30/单测覆盖，arcpy 脚本按 lay.get('scalebar_length_cm') 取目标条长（目检 4cm 条长一致）；R3：arcpy nolayout 运行时产物仅 rgb8+aprx（无 pdf/png），has_layout 分支与 qgis nolayout P0 等价同时证实；R4：noframe 变体运行成功，独立 arcpy 探针实测 CIM graphicFrame.borderSymbol symbolLayer width=0（标准版=1，对照成立）；R5：调试 PDF 已不存在。仓库文件零改动（验证全程只读），交付目录为含五要素 .aprx 与含经纬网布局 .qgz 的 A1 标准状态。 | 2026-10-06T09:16:08.171Z |
+| 2 | 1 | 1 | recovery | — | 用户要求继续修复第 2 轮验收剩余 2 条扩展点风险（实现层，无契约/验收文字变化）：扩展 1（经纬线无度标注）——arcpy 自绘经纬网在图框边加度标注文本：每条经线在框顶标注经度（如 116.4°E）、每条纬线在框左标注纬度（如 40.0°N），位置由投影后页面坐标线性映射计算，字号 7；扩展 2（比例尺取整偏差）——比例尺刻度从『向下取 1/2/5』改为『就近取 1/2/5』（在 mag 与 10×mag 两档的全部 1/2/5 候选中选绝对偏差最小者），最坏偏差从 -60% 收窄到 ±33% 以内，标注仍由构造保证正确。两项均为 arcpy 脚本内呈现层改动。 | 2026-10-06T09:32:47.581Z |
+| 2 | 2 | 1 | pass | — | 第 3 轮独立验收 6/6 全部通过。两条扩展点修复均以『读代码+现场产物』双重证据确认落地：扩展 1（经纬线度标注）——arcpy_bridge.py graticule 块为每条经线在框底下沿、每条纬线在框左内沿生成 _fmt 度标注（页面坐标由 camera extent↔地图框矩形线性映射，7pt Arial）；现场唯一一次 arcpy graticule 冒烟（28.6s）后，解包 .aprx 的 CIM 布局实测 12 个度标注文本（116.28°E…116.42°E 共 8 个、39.96°N…40.02°N 共 4 个，0.02° 步长）与 12 条经纬线一一对应，layout.png 目检落位正确、可读性好。扩展 2（比例尺就近取整）——候选集为 [1,2,5]×mag 与 [1,2,5]×mag×10 共 6 个、min(\|c-D0\|) 就近选取（arcpy_bridge.py 292-319 行）；推理与 CIM 双重验证：本例无论按任务包给定 S≈1:70148（D0≈2806m）还是按持久化 camera scale 57947.8（D0≈2318m），就近结果均为 D=2000 → 比例尺 0-1000-2000 m，与修复前一致、无回归，标注仍由构造保证正确。A1/A4 未触碰本轮改动，复用第 2 轮结论+本轮 Runtime passed 印证；A3 契约层零改动；A5 现场复跑 71 用例 0.283s 全绿；A6 指纹不变、source.py/grid.py 零改动、PROCESSING_VERSION=2、arcgispro-py3 零新包（仅 __pycache__ 缓存扰动）。验证全程仓库只读，唯一 arcpy 调用为 1 次 graticule 冒烟。C2 可进入收尾。 | 2026-10-06T09:52:06.366Z |
+| 2 | 2 | 1 | recovery | — | 用户要求以最优解修复第 3 轮验收剩余 3 条风险：风险 1（默认细线黑字视觉偏淡）——创建后经 CIM 定制符号：经纬线/度标注改白色并加线宽（深色影像上可读），比例尺线条黑 1.2pt，度标注若 CIM 支持则加白晕（探针先行验证 CIM symbol 写回路径，失败则回退默认符号并记录）；风险 2（比例尺条长 ±1/3 偏差）——比例尺改为细分格条：半格距取 1/2/5 整值（就近目标），格数 n=round(目标条长/半格长) 截断 2-10，总长偏差收窄到半格级（约 ±10% 内），刻度逐半格、标注逐整格+端点，全部为 1/2/5 整值；风险 3（graticule 注释残留『不做度标注』旧句）——同步修正为现状描述。均为 arcpy 脚本呈现层改动，契约与验收文字不变。 | 2026-10-06T10:17:17.818Z |
+| 2 | 3 | 1 | pass | — | 独立复核第 4 轮（repair iteration 3）提交，结论 pass。3 条风险的最优解修复全部以代码审查+现场证据证实：修复 1 的 CIM 样式路径与任务给定一致且从落盘 .aprx 读回验证持久化（经纬线白 0.8pt/比例尺黑 1.2pt/纬线标注白字）；修复 2 的细分格比例尺算法（6 候选就近 G0/4、n 截断 2-10、页宽守卫、逐半格刻度、1/2/5 整值标注、端点带单位）在 n=5 实例上完整核验，Builder 自查发现的 n 奇数端点覆盖 bug 修复成立（2000 与 2500 m 并存）；修复 3 的旧注释已清零。A1 双出图六件产物新鲜落盘，A2 五要素程序化+人工双确认，A3/A4 契约与纪律未回归，A5 71 单测 0.25s 全绿，A6 指纹/零改动/零新包红线全部守住。arcpy 冒烟仅消耗 1 次（27s），残余风险均为已知取舍，无新增风险。 | 2026-10-06T10:47:29.432Z |
+
+
+
+## 结论
+
+独立复核第 4 轮（repair iteration 3）提交，结论 pass。3 条风险的最优解修复全部以代码审查+现场证据证实：修复 1 的 CIM 样式路径与任务给定一致且从落盘 .aprx 读回验证持久化（经纬线白 0.8pt/比例尺黑 1.2pt/纬线标注白字）；修复 2 的细分格比例尺算法（6 候选就近 G0/4、n 截断 2-10、页宽守卫、逐半格刻度、1/2/5 整值标注、端点带单位）在 n=5 实例上完整核验，Builder 自查发现的 n 奇数端点覆盖 bug 修复成立（2000 与 2500 m 并存）；修复 3 的旧注释已清零。A1 双出图六件产物新鲜落盘，A2 五要素程序化+人工双确认，A3/A4 契约与纪律未回归，A5 71 单测 0.25s 全绿，A6 指纹/零改动/零新包红线全部守住。arcpy 冒烟仅消耗 1 次（27s），残余风险均为已知取舍，无新增风险。
