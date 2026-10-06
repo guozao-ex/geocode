@@ -12,18 +12,19 @@ from unittest import mock
 
 from _helpers import make_spec
 from gis import spec as spec_module
-from gis.spec import PROCESSING_VERSION, ArtifactSpec
+from gis.spec import PROCESSING_VERSION, ArtifactSpec, LayoutSpec
 
 # ★ 守卫名单：给 ArtifactSpec 新增字段时，必须把新字段挪进其中一组。
 # 白名单 = 决定像素输出的字段（参与哈希）；排除名单 = 不影响像素值的字段。
 # 注意 nodata：当前 spec.fingerprint() 的 payload 显式排除它（与 id/note/tags/render
 # 同类）。若未来认定 nodata 影响像素输出，需按红线 8 把它移入白名单——那是一次
 # 契约变更，须评估对历史缓存指纹的影响。
+# layout（2026-10-06，C2）：呈现层规格（图廓/比例尺/图例等），与 render 同类，排除。
 FINGERPRINT_FIELDS = {
     "asset", "band_expr", "crs", "scale", "aoi",
     "dtype", "bands", "time_range", "reducer",
 }
-EXCLUDED_FIELDS = {"id", "note", "tags", "render", "nodata"}
+EXCLUDED_FIELDS = {"id", "note", "tags", "render", "nodata", "layout"}
 
 
 class FingerprintStabilityTest(unittest.TestCase):
@@ -36,6 +37,7 @@ class FingerprintStabilityTest(unittest.TestCase):
             make_spec(note="other-note"),
             make_spec(tags=("x", "y")),
             make_spec(render=None),
+            make_spec(layout=LayoutSpec(title="论文图 1")),   # C2：呈现层不影响指纹
         ]
         for v in variants:
             with self.subTest(spec_id=v.id):

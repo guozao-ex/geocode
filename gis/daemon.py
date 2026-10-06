@@ -148,7 +148,13 @@ def act_job_submit(body: dict) -> dict:
         CURRENT_SPEC = spec
 
     fn = {KIND_EMIT: run_emit, KIND_DESCRIBE: run_describe, KIND_DEFAULTS: run_defaults}[kind]
-    job = JOBS.submit(kind, fn, spec=spec, exit=exit_)
+    renderer = body.get("renderer")
+    if renderer is not None and kind == KIND_EMIT and exit_ == "map":
+        if renderer not in ("qgis", "arcpy"):
+            raise SpecError(
+                f"renderer={renderer!r} 不认识。可选：'qgis'（默认，.qgz+PNG）或 'arcpy'（.aprx+PDF/PNG 出版级）。"
+            )
+    job = JOBS.submit(kind, fn, spec=spec, exit=exit_, renderer=renderer)
     return {"job_id": job.id, "job": job.to_dict()}
 
 
@@ -242,6 +248,8 @@ MCP_TOOLS: list[dict] = [
             "properties": {
                 "kind": {"type": "string", "enum": ["emit", "describe", "defaults"], "default": "emit"},
                 "exit": {"type": "string", "enum": list(EXITS)},
+                "renderer": {"type": "string", "enum": ["qgis", "arcpy"],
+                             "description": "仅 exit=map 有效：qgis（默认，.qgz+PNG）/ arcpy（.aprx+PDF/PNG 出版级）"},
                 "spec": {"type": "object", "description": "不传则用当前 spec"},
             },
             "required": [],

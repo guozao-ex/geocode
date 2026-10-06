@@ -102,6 +102,95 @@ class RenderSpec:
 
 
 # ---------------------------------------------------------------------------
+# 制图规格（出版级布局要素，被 qgis / arcpy 两个 bridge 共同消费）
+# ---------------------------------------------------------------------------
+
+PAGE_SIZES = ("A4", "A3", "A2", "A1", "LETTER", "TABLOID")
+ORIENTATIONS = ("landscape", "portrait")
+LAYOUT_FORMATS = ("pdf", "png", "jpg")
+
+
+@dataclass(frozen=True)
+class LayoutSpec:
+    """
+    出版级制图要素契约 —— 与 RenderSpec 对称，呈现层规格。
+
+    qgis_bridge 与 arcpy_bridge 共同消费，不允许各自私有的布局参数。
+    呈现层字段**不参与指纹**（不影响像素值，见 tests/unit 的指纹守卫）。
+    """
+
+    title: str | None = None          # 图名；None → 用 spec.id
+    frame: bool = True                # 图廓（地图外框）
+    scalebar: bool = True             # 比例尺
+    scalebar_length_cm: float = 4.0   # 比例尺目标条长（cm，页面单位）
+    north_arrow: bool = True          # 指北针
+    legend: bool = True               # 图例
+    graticule: bool = False           # 经纬网
+    dpi: int = 300
+    page_size: str = "A4"
+    orientation: str = "landscape"
+    formats: tuple[str, ...] = ("pdf", "png")
+
+    def __post_init__(self) -> None:
+        if self.page_size not in PAGE_SIZES:
+            raise SpecError(
+                f"page_size={self.page_size!r} 不支持。可选：{', '.join(PAGE_SIZES)}"
+            )
+        if self.orientation not in ORIENTATIONS:
+            raise SpecError(
+                f"orientation={self.orientation!r} 不支持。可选：{', '.join(ORIENTATIONS)}"
+            )
+        if self.dpi <= 0 or self.dpi > 1200:
+            raise SpecError(f"dpi 应在 1-1200 之间，收到 {self.dpi}。")
+        if not (0 < self.scalebar_length_cm <= 30):
+            raise SpecError(
+                f"scalebar_length_cm 应在 0-30（不含 0）之间，收到 {self.scalebar_length_cm}。"
+            )
+        bad = [f for f in self.formats if f not in LAYOUT_FORMATS]
+        if bad:
+            raise SpecError(
+                f"formats 含不支持的值 {bad}。可选：{', '.join(LAYOUT_FORMATS)}"
+            )
+
+    def to_dict(self) -> dict:
+        d = {
+            "title": self.title,
+            "frame": self.frame,
+            "scalebar": self.scalebar,
+            "scalebar_length_cm": self.scalebar_length_cm,
+            "north_arrow": self.north_arrow,
+            "legend": self.legend,
+            "graticule": self.graticule,
+            "dpi": self.dpi,
+            "page_size": self.page_size,
+            "orientation": self.orientation,
+            "formats": list(self.formats),
+        }
+        return {k: v for k, v in d.items() if v is not None}
+
+    @staticmethod
+    def from_dict(d: dict | None) -> "LayoutSpec | None":
+        if not d:
+            return None
+        kw: dict[str, Any] = {}
+        if d.get("title"):
+            kw["title"] = d["title"]
+        for k in ("frame", "scalebar", "north_arrow", "legend", "graticule"):
+            if k in d:
+                kw[k] = bool(d[k])
+        if "dpi" in d:
+            kw["dpi"] = int(d["dpi"])
+        if "scalebar_length_cm" in d:
+            kw["scalebar_length_cm"] = float(d["scalebar_length_cm"])
+        for k in ("page_size", "orientation"):
+            if d.get(k):
+                kw[k] = d[k]
+        if d.get("formats"):
+            kw["formats"] = tuple(d["formats"])
+        return LayoutSpec(**kw)
+
+
+# ---------------------------------------------------------------------------
 # 产 物 规 格
 # ---------------------------------------------------------------------------
 
@@ -141,6 +230,9 @@ class ArtifactSpec:
 
     # --- 渲染 ---
     render: RenderSpec | None = None
+
+    # --- 制图（呈现层；不参与指纹）---
+    layout: LayoutSpec | None = None
 
     # --- 元信息（不参与计算，仅供追踪）---
     note: str = ""
@@ -237,6 +329,7 @@ class ArtifactSpec:
             "time_range": list(self.time_range) if self.time_range else None,
             "reducer": self.reducer,
             "render": self.render.to_dict() if self.render else None,
+            "layout": self.layout.to_dict() if self.layout else None,
         }
         if include_meta:
             d["note"] = self.note
@@ -260,6 +353,7 @@ class ArtifactSpec:
             time_range=tuple(tr) if tr else None,
             reducer=d.get("reducer"),
             render=RenderSpec.from_dict(d.get("render")),
+            layout=LayoutSpec.from_dict(d.get("layout")),
             note=d.get("note", ""),
             tags=tuple(d.get("tags") or ()),
         )

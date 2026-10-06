@@ -31,6 +31,9 @@ from .spec import ArtifactSpec, Exit
 # getDownloadURL 单次请求的像素上限（经验值）
 MAX_DIRECT_PIXELS = 64_000_000
 
+# map 出口的渲染引擎
+RENDERERS = ("qgis", "arcpy")
+
 
 # ---------------------------------------------------------------------------
 # 调度
@@ -347,12 +350,20 @@ def _array_sample(arr, rows: int = 3, cols: int = 3) -> dict:
 
 def emit_map(job: Job) -> dict:
     """
-    两条分支，都产出"人能直接看"的东西：
-      1. .qgz  QGIS 工程 —— 双击打开，图层/CRS/拉伸都配好
-      2. .png  静态预览  —— 不用打开任何软件就能看
+    两条 renderer 路径，都产出"人能直接看"的东西：
+      qgis（默认）: .qgz 工程 + .png 静态预览 —— 现状行为；有 LayoutSpec 时
+                    工程内嵌打印布局（图廓/比例尺/指北针/图例/标题）
+      arcpy:        .aprx 工程 + 出版级 PDF/PNG（LayoutSpec 五要素）
 
     数据复用 emit_file 的产物，不重复下载。
     """
+    renderer = (job.renderer or "qgis").lower()
+    if renderer not in RENDERERS:
+        raise ValueError(
+            f"renderer={job.renderer!r} 不认识。可选：{', '.join(RENDERERS)}。\n"
+            "  'qgis'（默认）出 .qgz + PNG；'arcpy' 出 .aprx + PDF/PNG 出版级图。"
+        )
+
     spec = job.spec
     assert spec is not None
 
@@ -361,47 +372,74 @@ def emit_map(job: Job) -> dict:
 
     results: dict = {
         "exit": "map",
+        "renderer": renderer,
         "spec_fingerprint": spec.fingerprint(),
         "grid": grid.to_dict(),
         "source_raster": str(raster),
         "artifacts": [],
     }
 
-    # --- 先烘焙显示用 8bit RGB：拉伸固定进像素，QGIS 零解释 ---
+    # --- 先烘焙显示用 8bit RGB：拉伸固定进像素，渲染端零解释 ---
     job.progress("烘焙显示用 8bit RGB", 50, "拉伸写入像素")
     visual = write_visual_rgb(spec, raster, grid)
     results["visual_raster"] = str(visual)
     results["artifacts"].append(str(visual))
     job.artifacts.append(str(visual))
 
-    # --- 分支 1：.qgz —— 指向**显示用**栅格，不是浮点分析用栅格 ---
-    job.progress("生成 QGIS 工程", 62, ".qgz")
-    try:
-        qgz = _qb.write_qgz(spec, visual, grid, _output_path(spec, "deliver", ".qgz"), timeout=240)
-        qgz = Path(qgz["path"])
-        results["qgz"] = str(qgz)
-        results["artifacts"].append(str(qgz))
-        job.artifacts.append(str(qgz))
-    except Exception as e:
-        results["qgz_error"] = f"{type(e).__name__}: {e}"
-        job.progress("QGIS 工程生成失败，继续做预览图", 62, str(e)[:80])
+    if renderer == "arcpy":
+        # --- arcpy 分支：.aprx + 出版级 PDF/PNG（LayoutSpec 五要素）---
+        from . import arcpy_bridge as _ab
+        job.check_cancelled()
+        job.progress("生成 ArcGIS Pro 工程", 62, ".aprx + PDF/PNG")
+        try:
+            res = _ab.write_aprx(spec, visual, grid, layout=spec.layout)
+            for key in ("aprx", "pdf", "png"):
+                if res.get(key):
+                    results[key] = res[key]
+                    results["artifacts"].append(res[key])
+                    job.artifacts.append(res[key])
+            if res.get("elements"):
+                results["layout_elements"] = res["elements"]
+        except Exception as e:
+            results["arcpy_error"] = f"{type(e).__name__}: {e}"
+            job.progress("ArcGIS Pro 出图失败", 62, str(e)[:80])
+    else:
+        # --- qgis 分支（现状）：.qgz —— 指向**显示用**栅格，不是浮点分析用栅格 ---
+        job.progress("生成 QGIS 工程", 62, ".qgz")
+        try:
+            qgz_detail = _qb.write_qgz(
+                spec, visual, grid, _output_path(spec, "deliver", ".qgz"),
+                timeout=240, layout=spec.layout,
+            )
+            qgz = Path(qgz_detail["path"])
+            results["qgz"] = str(qgz)
+            if qgz_detail.get("layout"):
+                results["qgis_layout"] = qgz_detail["layout"]
+            results["artifacts"].append(str(qgz))
+            job.artifacts.append(str(qgz))
+        except Exception as e:
+            results["qgz_error"] = f"{type(e).__name__}: {e}"
+            job.progress("QGIS 工程生成失败，继续做预览图", 62, str(e)[:80])
 
-    # --- 分支 2：静态 PNG ---
-    job.check_cancelled()
-    job.progress("渲染预览图", 78, ".png")
-    try:
-        png = _render_png(spec, raster, grid, job)
-        results["png"] = str(png)
-        results["artifacts"].append(str(png))
-        job.artifacts.append(str(png))
-    except Exception as e:
-        results["png_error"] = f"{type(e).__name__}: {e}"
+        # --- 静态 PNG ---
+        job.check_cancelled()
+        job.progress("渲染预览图", 78, ".png")
+        try:
+            png = _render_png(spec, raster, grid, job)
+            results["png"] = str(png)
+            results["artifacts"].append(str(png))
+            job.artifacts.append(str(png))
+        except Exception as e:
+            results["png_error"] = f"{type(e).__name__}: {e}"
 
-    if not results["artifacts"]:
+    branch_failed = (
+        "arcpy_error" in results if renderer == "arcpy"
+        else ("qgz_error" in results and "png_error" in results)
+    )
+    if branch_failed:
         raise RuntimeError(
-            "两个分支都没产出。\n"
-            f"  .qgz 失败：{results.get('qgz_error')}\n"
-            f"  .png 失败：{results.get('png_error')}"
+            f"renderer={renderer!r} 的产物分支全部失败。\n"
+            f"  错误记录：{ {k: v for k, v in results.items() if k.endswith('_error')} }"
         )
 
     job.progress("完成", 100, f"{len(results['artifacts'])} 个产物")
@@ -511,7 +549,9 @@ def _apply_colormap(data: "np.ndarray") -> "np.ndarray":
         [0.135, 0.659, 0.518], [0.267, 0.749, 0.441], [0.478, 0.821, 0.318],
         [0.741, 0.873, 0.150], [0.993, 0.906, 0.144],
     ])
-    idx = np.clip(data, 0, 1) * (len(stops) - 1)
+    # nodata（masked=True 的 NaN）必须先归零 —— 否则 np.clip 透传 NaN，
+    # floor().astype(int) 下溢成 int64 最小值，索引直接 IndexError（C2 实测）。
+    idx = np.nan_to_num(np.clip(data, 0, 1), nan=0.0) * (len(stops) - 1)
     lo = np.floor(idx).astype(int)
     hi = np.clip(lo + 1, 0, len(stops) - 1)
     t = (idx - lo)[..., None]

@@ -50,6 +50,7 @@ class Job:
     status: str = QUEUED
     spec: ArtifactSpec | None = None
     exit: Exit | None = None
+    renderer: str | None = None     # map 出口专用：qgis（默认）/ arcpy
 
     phase: str = ""
     pct: float = 0.0
@@ -98,6 +99,7 @@ class Job:
             "kind": self.kind,
             "status": self.status,
             "exit": self.exit,
+            "renderer": self.renderer,
             "phase": self.phase,
             "pct": round(self.pct, 1),
             "message": self.message,
@@ -194,6 +196,7 @@ class Jobs:
         *,
         spec: ArtifactSpec | None = None,
         exit: Exit | None = None,
+        renderer: str | None = None,
         job_id: str | None = None,
     ) -> Job:
         """
@@ -201,7 +204,7 @@ class Jobs:
         进度辅助：见下面的 _Progress 绑定。
         """
         jid = job_id or f"j_{uuid.uuid4().hex[:8]}"
-        job = Job(id=jid, kind=kind, spec=spec, exit=exit)
+        job = Job(id=jid, kind=kind, spec=spec, exit=exit, renderer=renderer)
         with self._lock:
             self._jobs[jid] = job
             self._order.append(jid)

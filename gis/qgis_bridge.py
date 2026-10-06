@@ -15,11 +15,12 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 from . import geoenv
 from .grid import Grid
-from .spec import ArtifactSpec
+from .spec import ArtifactSpec, LayoutSpec
 
 # ---------------------------------------------------------------------------
 # 定位 QGIS
@@ -72,11 +73,14 @@ def write_qgz(
     out: Path,
     *,
     timeout: float = 240.0,
+    layout: LayoutSpec | None = None,
 ) -> dict:
     """
     调 QGIS 生成 .qgz。失败抛 RuntimeError，消息里带 QGIS 的原始输出。
 
     参数 out 由调用方决定，本函数只负责"生成成功或抛出带原因的异常"。
+    layout 非 None 时在工程内嵌一个打印布局（图廓/比例尺/指北针/图例/标题/
+    经纬网）—— 消费 LayoutSpec 契约，不私造布局参数。
     """
     bat = qgis_python()
     if bat is None:
@@ -122,8 +126,10 @@ def write_qgz(
         "raster": str(raster).replace("\\", "/"),
         "out": str(out).replace("\\", "/"),
         "crs": grid.crs,
-        "title": spec.id,
+        "title": (layout.title if layout and layout.title else spec.id),
         "layer_name": spec.slug,
+        # LayoutSpec 契约透传给 QGIS 侧脚本（呈现层，不私造参数）
+        "layout": layout.to_dict() if layout else None,
         "color": {
             "bands": list(render.bands) if render and render.bands else None,
             "band_index": band_index,
@@ -159,6 +165,10 @@ def write_qgz(
             detail = json.loads(tail[-1])
         except json.JSONDecodeError:
             detail = {"stdout": tail[-1][:300]}
+    # 子进程 stderr 里是布局/经纬网等的 WARN 与 traceback —— 带回给调用方
+    warn_lines = [l for l in (proc.stderr or "").strip().splitlines() if l.strip()]
+    if warn_lines:
+        detail["stderr_tail"] = warn_lines[-12:]
 
     detail.update({
         "ok": True,
@@ -297,6 +307,20 @@ def main(cfg):
             print("WARN: 设置默认视图范围失败: " + str(exc), file=sys.stderr)
             view_ok = False
 
+        # --- 打印布局（LayoutSpec 契约，C2）---
+        layout_name = None
+        layout_error = None
+        lay_cfg = cfg.get("layout")
+        if lay_cfg:
+            try:
+                layout_name = build_layout(proj, layer, lay_cfg)
+            except Exception as exc:
+                import traceback as _tb
+                layout_error = type(exc).__name__ + ": " + str(exc)
+                print("WARN: 打印布局生成失败: " + layout_error, file=sys.stderr)
+                print(_tb.format_exc(limit=6), file=sys.stderr)
+                layout_name = None
+
         wrote = bool(proj.write(cfg["out"]))
         ext = layer.extent()
         print(json.dumps({
@@ -306,11 +330,176 @@ def main(cfg):
             "bands": nbands,
             "layer_valid": layer.isValid(),
             "view_extent_set": view_ok,
+            "layout": layout_name,
+            "layout_error": layout_error,
             "extent": [ext.xMinimum(), ext.yMinimum(), ext.xMaximum(), ext.yMaximum()],
         }, ensure_ascii=False))
         return 0 if wrote else 3
     finally:
         qgs.exitQgis()
+
+
+def build_layout(proj, layer, lay_cfg):
+    """
+    内嵌打印布局：消费 LayoutSpec（图廓/比例尺/指北针/图例/标题）。
+    经纬网（graticule）用 QgsLayoutItemMapGrid 实现（CRS=4326 度间隔，退化时投影网格）。
+    """
+    import os
+    import sys
+    import tempfile
+    from qgis.core import (
+        QgsPrintLayout, QgsLayoutItemMap, QgsLayoutItemLabel,
+        QgsLayoutItemLegend, QgsLayoutItemScaleBar,
+        QgsLayoutPoint, QgsLayoutSize, QgsUnitTypes, QgsLayoutItemPage,
+    )
+    from qgis.PyQt.QtGui import QFont
+
+    # QGIS 4 把枚举从 QgsUnitTypes 迁到了 Qgis —— 双写兼容
+    try:
+        mm = QgsUnitTypes.LayoutMillimeters
+    except AttributeError:
+        mm = Qgis.LayoutUnit.Millimeters
+    try:
+        Orient = QgsLayoutItemPage.Orientation
+    except AttributeError:
+        Orient = Qgis.LayoutOrientation
+
+    lyt = QgsPrintLayout(proj)
+    lyt.initializeDefaults()
+    name = (lay_cfg.get("title") or "geocode-layout")[:60]
+    lyt.setName(name)
+
+    page = lyt.pageCollection().page(0)
+    orient = (Orient.Portrait if lay_cfg.get("orientation") == "portrait"
+              else Orient.Landscape)
+    page.setPageSize(lay_cfg.get("page_size") or "A4", orient)
+
+    mm = QgsUnitTypes.LayoutMillimeters
+    pw, ph = page.pageSize().width(), page.pageSize().height()
+    margin = 10
+
+    # 地图主体 + 图廓
+    map_item = QgsLayoutItemMap(lyt)
+    map_item.setRect(0, 0, 100, 100)
+    map_item.setLayers([layer])
+    try:
+        map_item.setCrs(layer.crs())   # 不设 CRS 会让经纬网度变换退化为空变换
+    except Exception:
+        pass
+    map_item.setFrameEnabled(bool(lay_cfg.get("frame", True)))
+    lyt.addLayoutItem(map_item)
+    map_item.attemptMove(QgsLayoutPoint(margin, margin + 14, mm))
+    map_item.attemptResize(QgsLayoutSize(pw - 2 * margin, ph - 2 * margin - 22, mm))
+    map_item.setExtent(layer.extent())
+
+    # 标题
+    if lay_cfg.get("title"):
+        lbl = QgsLayoutItemLabel(lyt)
+        lbl.setText(lay_cfg["title"])
+        f = QFont()
+        f.setPointSize(16)
+        f.setBold(True)
+        lbl.setFont(f)
+        lyt.addLayoutItem(lbl)
+        lbl.attemptMove(QgsLayoutPoint(margin, margin, mm))
+        lbl.attemptResize(QgsLayoutSize(pw - 2 * margin, 12, mm))
+
+    # 图例
+    if lay_cfg.get("legend", True):
+        leg = QgsLayoutItemLegend(lyt)
+        leg.setLinkedMap(map_item)
+        lyt.addLayoutItem(leg)
+        leg.attemptMove(QgsLayoutPoint(margin + 2, ph - margin - 48, mm))
+
+    # 比例尺
+    if lay_cfg.get("scalebar", True):
+        sb = QgsLayoutItemScaleBar(lyt)
+        sb.setLinkedMap(map_item)
+        sb.applyDefaultSize()
+        lyt.addLayoutItem(sb)
+        sb.attemptMove(QgsLayoutPoint(margin + 2, ph - margin - 14, mm))
+
+    # 指北针：QGIS 4 移除了 QgsLayoutItemNorthArrow —— 用内置 SVG 的 Picture 兜底
+    if lay_cfg.get("north_arrow", True):
+        try:
+            from qgis.core import QgsLayoutItemNorthArrow
+            na = QgsLayoutItemNorthArrow(lyt)
+            na.setLinkedMap(map_item)
+        except ImportError:
+            from qgis.core import QgsLayoutItemPicture
+            svg_path = os.path.join(tempfile.gettempdir(), "geocode_north_arrow.svg")
+            with open(svg_path, "w", encoding="utf-8") as f:
+                f.write(
+                    '<svg xmlns="http://www.w3.org/2000/svg" width="60" height="72" '
+                    'viewBox="0 0 60 72">'
+                    '<polygon points="30,4 40,48 30,40 20,48" fill="#1a1a1a"/>'
+                    '<text x="30" y="66" font-size="14" text-anchor="middle" '
+                    'font-family="Arial" fill="#1a1a1a">N</text></svg>'
+                )
+            na = QgsLayoutItemPicture(lyt)
+            na.setPicturePath(svg_path)
+            na.setLinkedMap(map_item)
+        lyt.addLayoutItem(na)
+        na.attemptMove(QgsLayoutPoint(pw - margin - 20, ph - margin - 34, mm))
+
+    # 经纬网（graticule）：QgsLayoutItemMapGrid，CRS=4326，间隔按范围取 1/2/5 整值
+    if lay_cfg.get("graticule"):
+        import math as _math
+        try:
+            from qgis.core import QgsLayoutItemMapGrid, QgsCoordinateTransform
+            g = QgsLayoutItemMapGrid("geocode-graticule", map_item)
+            g.setCrs(QgsCoordinateReferenceSystem("EPSG:4326"))
+            try:
+                xform = QgsCoordinateTransform(
+                    map_item.crs(), QgsCoordinateReferenceSystem("EPSG:4326"),
+                    proj.transformContext())
+                ext4326 = xform.transformBoundingBox(map_item.extent())
+                span = max(ext4326.xMaximum() - ext4326.xMinimum(),
+                           ext4326.yMaximum() - ext4326.yMinimum())
+                mag = 10 ** int(_math.floor(_math.log10(span / 5)))
+                step = mag
+                for mult in (5, 2, 1):
+                    if span / 5 >= mult * mag:
+                        step = mult * mag
+                        break
+                g.setIntervalX(step)
+                g.setIntervalY(step)
+            except Exception as exc:
+                # 度变换失败 → 退化为投影坐标网格（CRS 同步改为地图 CRS，单位一致）
+                print("WARN: 经纬网度间隔设置失败，退化为投影坐标网格: " + str(exc),
+                      file=sys.stderr)
+                g.setCrs(map_item.crs())
+                ext_m = map_item.extent()
+                span_m = max(ext_m.width(), ext_m.height())
+                mag = 10 ** int(_math.floor(_math.log10(span_m / 5)))
+                step = mag
+                for mult in (5, 2, 1):
+                    if span_m / 5 >= mult * mag:
+                        step = mult * mag
+                        break
+                g.setIntervalX(step)
+                g.setIntervalY(step)
+            try:
+                g.setStyle(QgsLayoutItemMapGrid.Line)
+            except Exception:
+                try:
+                    g.setStyle(Qgis.LayoutGridStyle.Line)
+                except Exception:
+                    pass
+            try:
+                g.setGridLineWidth(0.2)
+            except Exception:
+                pass
+            map_item.grids().addGrid(g)
+            map_item.updateBoundingRect()
+            map_item.update()
+        except Exception as exc:
+            import traceback as _tb
+            print("WARN: 经纬网生成失败: " + repr(exc), file=sys.stderr)
+            print(_tb.format_exc(limit=6), file=sys.stderr)
+
+    proj.layoutManager().addLayout(lyt)
+    return lyt.name()
 
 
 if __name__ == "__main__":
