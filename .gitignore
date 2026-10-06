@@ -1,8 +1,9 @@
 # ---- 数据与产物：全部可由 spec+指纹重生成，不进版本库 ----
 data/
 
-# ---- 开发文档与 comet 产物：个人文档，本地维护 ----
-/docs/
+# ---- 开发文档：个人文档，本地维护；comet 正式产物进版本库 ----
+/docs/*
+!/docs/comet/
 
 # ---- 第三方参考快照（GeoCode-Release v0.9.6 + zip）----
 _src/
@@ -23,3 +24,8 @@ desktop.ini
 
 # ---- IDE ----
 .idea/
+# >>> Comet managed project state >>>
+!/.comet/
+/.comet/*
+!/.comet/config.yaml
+# <<< Comet managed project state <<<
