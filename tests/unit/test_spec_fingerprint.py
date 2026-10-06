@@ -31,9 +31,17 @@ FINGERPRINT_FIELDS = {
 }
 EXCLUDED_FIELDS = {"id", "note", "tags", "render", "nodata", "layout"}
 
-# P0 样本 spec 的指纹金值（data/derived/ 既有缓存 c9243efd 的完整指纹）。
-# 新增字段若意外参与旧 spec 哈希，此断言首先失败。
-P0_GOLDEN_FINGERPRINT = "c9243efd40318c85"
+# P0 样本 spec 的指纹金值，按 PROCESSING_VERSION 时代登记（2026-10-06 C3 修复轮预注册）。
+#   PV 2 → c9243efd40318c85：云掩膜+反射率缩放时代，data/derived/ 既有缓存
+#          s2_beijing_test.c9243efd.* 的锚点。
+#   PV 3 → b91c09c9c6451c16：C4 p2-presets（LC08/LC09 补官方 offset -0.2）将 bump 2→3，
+#          落地前先行登记——P0 spec 的指纹只依赖 spec 字段+PV，与预设表无关，可离线预算。
+# 纪律：任何 PV bump 必须在此登记新金值（mock 实算后填入），未登记的 PV 会被断言拦截——
+# 这是红线 3（改变像素输出必须 bump）与红线 8（指纹归属显式化）的联防。
+GOLDEN_FINGERPRINTS: dict[int, str] = {
+    2: "c9243efd40318c85",
+    3: "b91c09c9c6451c16",
+}
 
 
 class FingerprintStabilityTest(unittest.TestCase):
@@ -86,12 +94,20 @@ class FingerprintStabilityTest(unittest.TestCase):
 
 
 class GoldenFingerprintTest(unittest.TestCase):
-    """C3 A5：旧 spec 指纹不变 —— 金指纹锚定 P0 缓存产物。"""
+    """C3 A5：旧 spec 指纹不变 —— 金指纹按 PV 时代登记，锚定 P0 缓存产物。"""
 
-    def test_p0_golden_fingerprint_unchanged(self):
-        # P0 样本参数（tests/smoke_emit.py 原样）→ 既有缓存 s2_beijing_test.c9243efd.*
-        # 任一新字段意外参与缺省 spec 的哈希，这里首先红。
-        self.assertEqual(make_p0_spec().fingerprint(), P0_GOLDEN_FINGERPRINT)
+    def test_p0_golden_fingerprint_matches_processing_era(self):
+        # 当前 PV 必须已登记金值；P0 样本参数（tests/smoke_emit.py 原样）在
+        # PV=2 时代对应既有缓存 s2_beijing_test.c9243efd.*。
+        # 任一新字段意外参与缺省 spec 的哈希、或 PV bump 未登记金值，这里首先红。
+        expected = GOLDEN_FINGERPRINTS.get(PROCESSING_VERSION)
+        self.assertIsNotNone(
+            expected,
+            f"PROCESSING_VERSION={PROCESSING_VERSION} 未登记 P0 金指纹——"
+            "按红线 3/8：bump 后用 mock 实算 P0 spec 指纹并登记进 GOLDEN_FINGERPRINTS，"
+            "同时在 README §9.1 记一笔。",
+        )
+        self.assertEqual(make_p0_spec().fingerprint(), expected)
 
     def test_timeseries_fields_absent_by_default(self):
         # 缺省（None）的时序字段不得改变指纹 —— 与金指纹互为表里的显式断言
