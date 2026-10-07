@@ -13,7 +13,9 @@ from unittest import mock
 from _helpers import make_p0_spec, make_spec
 
 from gis import spec as spec_module
-from gis.spec import PROCESSING_VERSION, ArtifactSpec, LayoutSpec
+from gis.spec import (
+    PROCESSING_VERSION, ArtifactSpec, LayoutSpec, OverlaySpec,
+)
 
 # ★ 守卫名单：给 ArtifactSpec 新增字段时，必须把新字段挪进其中一组。
 # 白名单 = 决定像素输出的字段（参与哈希）；排除名单 = 不影响像素值的字段。
@@ -24,12 +26,14 @@ from gis.spec import PROCESSING_VERSION, ArtifactSpec, LayoutSpec
 # layout（2026-10-06，C2）：呈现层规格（图廓/比例尺/图例等），与 render 同类，排除。
 # time_step / time_ranges（2026-10-06，C3）：决定期窗口 → 决定像素输出，入白名单；
 # 缺省时在 fingerprint() payload 中整个键缺席 → 旧 spec 指纹不变（金指纹锚定）。
+# overlays（2026-10-07，C8）：矢量叠加呈现层，与 layout 同类，排除 —— 缺席与在场
+# 指纹逐位相同（D3 预裁决；金指纹 b91c09c9c6451c16 不回退）。
 FINGERPRINT_FIELDS = {
     "asset", "band_expr", "crs", "scale", "aoi",
     "dtype", "bands", "time_range", "reducer",
     "time_step", "time_ranges",
 }
-EXCLUDED_FIELDS = {"id", "note", "tags", "render", "nodata", "layout"}
+EXCLUDED_FIELDS = {"id", "note", "tags", "render", "nodata", "layout", "overlays"}
 
 # P0 样本 spec 的指纹金值，按 PROCESSING_VERSION 时代登记（2026-10-06 C3 修复轮预注册）。
 #   PV 2 → c9243efd40318c85：云掩膜+反射率缩放时代，data/derived/ 既有缓存
@@ -55,6 +59,12 @@ class FingerprintStabilityTest(unittest.TestCase):
             make_spec(tags=("x", "y")),
             make_spec(render=None),
             make_spec(layout=LayoutSpec(title="论文图 1")),   # C2：呈现层不影响指纹
+            # C8：矢量叠加呈现层 —— 缺席与在场（含不同内容）指纹逐位相同（D3）
+            make_spec(overlays=(OverlaySpec(source="data/deliver/x.gpkg"),)),
+            make_spec(overlays=(
+                OverlaySpec(source="data/deliver/x.gpkg", color="#ff0000"),
+                OverlaySpec(source="data/deliver/y.gpkg", width=5.0, label_field="name"),
+            )),
         ]
         for v in variants:
             with self.subTest(spec_id=v.id):

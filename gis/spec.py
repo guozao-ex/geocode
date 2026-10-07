@@ -218,6 +218,74 @@ class LayoutSpec:
 
 
 # ---------------------------------------------------------------------------
+# 矢量叠加（C8 W3：map 出口的矢量图层，被 qgis / arcpy 两个 bridge 共同消费）
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class OverlaySpec:
+    """
+    矢量叠加图层契约 —— 与 LayoutSpec 同类，呈现层规格。
+
+    source 必须是**物化落盘**的 GPKG / GeoJSON 文件路径（活引用禁止，D4）。
+    qgis_bridge 与 arcpy_bridge 共同消费同一份 OverlaySpec，
+    不允许各自私有的样式参数。
+    呈现层字段**不参与指纹**（不影响像素值，见 tests/unit 的指纹守卫）。
+    """
+
+    source: str                     # 物化 GPKG/GeoJSON 文件路径（必填）
+    color: str = "#3388ff"          # 边线/线/点主色（十六进制）
+    width: float = 2.0              # 线宽/点径（px）
+    opacity: float = 1.0            # 0-1
+    fill_color: str | None = None   # 面填充色；None = 不填充（仅描边）
+    label_field: str | None = None  # 标注字段名（图层属性列）
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.source, str) or not self.source.strip():
+            raise SpecError(
+                "OverlaySpec.source 必须是非空字符串（物化 GPKG/GeoJSON 文件路径）。"
+            )
+        if self.width <= 0:
+            raise SpecError(f"OverlaySpec.width 必须为正数，收到 {self.width}。")
+        if not (0 <= self.opacity <= 1):
+            raise SpecError(f"OverlaySpec.opacity 应在 0-1 之间，收到 {self.opacity}。")
+        for k in ("color", "fill_color"):
+            v = getattr(self, k)
+            if v is not None and (not isinstance(v, str) or not v.strip()):
+                raise SpecError(
+                    f"OverlaySpec.{k} 必须是非空颜色字符串（如 '#3388ff'），收到 {v!r}。"
+                )
+
+    def to_dict(self) -> dict:
+        d = {
+            "source": self.source,
+            "color": self.color,
+            "width": self.width,
+            "opacity": self.opacity,
+            "fill_color": self.fill_color,
+            "label_field": self.label_field,
+        }
+        return {k: v for k, v in d.items() if v is not None}
+
+    @staticmethod
+    def from_dict(d: dict) -> "OverlaySpec":
+        if not isinstance(d, dict):
+            raise SpecError(f"OverlaySpec.from_dict 需要 dict，收到 {type(d).__name__}。")
+        kw: dict[str, Any] = {}
+        if d.get("color"):
+            kw["color"] = str(d["color"])
+        if "width" in d:
+            kw["width"] = float(d["width"])
+        if "opacity" in d:
+            kw["opacity"] = float(d["opacity"])
+        if d.get("fill_color"):
+            kw["fill_color"] = str(d["fill_color"])
+        if d.get("label_field"):
+            kw["label_field"] = str(d["label_field"])
+        return OverlaySpec(source=d.get("source"), **kw)
+
+
+# ---------------------------------------------------------------------------
 # 产 物 规 格
 # ---------------------------------------------------------------------------
 
@@ -365,6 +433,9 @@ class ArtifactSpec:
     # --- 制图（呈现层；不参与指纹）---
     layout: LayoutSpec | None = None
 
+    # --- 矢量叠加（C8 W3；呈现层；不参与指纹，LayoutSpec 同款守卫）---
+    overlays: tuple[OverlaySpec, ...] = ()
+
     # --- 元信息（不参与计算，仅供追踪）---
     note: str = ""
     tags: tuple[str, ...] = ()
@@ -444,6 +515,19 @@ class ArtifactSpec:
                     "例如 {'type':'Polygon','coordinates':[[[...]]]}。"
                 )
 
+        if self.overlays:
+            if not isinstance(self.overlays, (tuple, list)):
+                raise SpecError(
+                    "overlays 必须是 OverlaySpec 序列（或缺省 ()），"
+                    "如 (OverlaySpec(source='data/deliver/x.gpkg'),)。"
+                )
+            for i, ov in enumerate(self.overlays):
+                if not isinstance(ov, OverlaySpec):
+                    raise SpecError(
+                        f"overlays[{i}] 必须是 OverlaySpec 实例，"
+                        f"收到 {type(ov).__name__}。字段校验在 OverlaySpec 构造时执行。"
+                    )
+
         if exit is not None:
             if exit not in EXITS:
                 raise SpecError(f"exit 必须是 {EXITS} 之一，收到 {exit!r}")
@@ -472,8 +556,8 @@ class ArtifactSpec:
 
     def fingerprint(self) -> str:
         """
-        内容指纹：忽略 id / note / tags / render / layout（不影响像素值），
-        只对决定输出的字段取哈希。
+        内容指纹：忽略 id / note / tags / render / layout / overlays
+        （不影响像素值），只对决定输出的字段取哈希。
 
         用途：验证"同一 spec 的三个出口产物一致"时，
         三个出口报出来的 fingerprint 必须相同。
@@ -497,6 +581,8 @@ class ArtifactSpec:
             payload["time_step"] = self.time_step
         if self.time_ranges is not None:
             payload["time_ranges"] = [list(p) for p in self.time_ranges]
+        # overlays / layout 同为呈现层，永不入 payload（C8 D3；金指纹
+        # b91c09c9c6451c16 锚定）—— 缺席与在场指纹逐位相同。
         blob = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str)
         return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
 
@@ -519,6 +605,7 @@ class ArtifactSpec:
             "time_ranges": [list(p) for p in self.time_ranges] if self.time_ranges else None,
             "render": self.render.to_dict() if self.render else None,
             "layout": self.layout.to_dict() if self.layout else None,
+            "overlays": [o.to_dict() for o in self.overlays] if self.overlays else None,
         }
         if include_meta:
             d["note"] = self.note
@@ -546,6 +633,10 @@ class ArtifactSpec:
             time_ranges=tuple((str(p[0]), str(p[1])) for p in trs) if trs else None,
             render=RenderSpec.from_dict(d.get("render")),
             layout=LayoutSpec.from_dict(d.get("layout")),
+            overlays=tuple(
+                o if isinstance(o, OverlaySpec) else OverlaySpec.from_dict(o)
+                for o in (d.get("overlays") or ())
+            ),
             note=d.get("note", ""),
             tags=tuple(d.get("tags") or ()),
         )

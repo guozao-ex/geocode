@@ -909,6 +909,11 @@ def emit_map(job: Job) -> dict:
                     工程内嵌打印布局（图廓/比例尺/指北针/图例/标题）
       arcpy:        .aprx 工程 + 出版级 PDF/PNG（LayoutSpec 五要素）
 
+    矢量叠加（C8 W3）：spec.overlays 同时分发两个 bridge，共同消费同一
+    OverlaySpec（样式参数同源，禁止私有矢量参数）。⚠️ .png 静态预览保持
+    **纯栅格烘焙**不变 —— 矢量可见性由 .qgz 工程与 arcpy PDF/PNG 承载，
+    不烘焙进 .png（呈现层口径，见 tests/unit/test_overlay_spec.py 与 brief）。
+
     数据复用 emit_file 的产物，不重复下载。
     """
     renderer = (job.renderer or "qgis").lower()
@@ -944,6 +949,8 @@ def emit_map(job: Job) -> dict:
         "source_raster": str(raster),
         "artifacts": [],
     }
+    if spec.overlays:
+        results["overlays"] = len(spec.overlays)
 
     # --- 先烘焙显示用 8bit RGB：拉伸固定进像素，渲染端零解释 ---
     job.progress("烘焙显示用 8bit RGB", 50, "拉伸写入像素")
@@ -958,7 +965,9 @@ def emit_map(job: Job) -> dict:
         job.check_cancelled()
         job.progress("生成 ArcGIS Pro 工程", 62, ".aprx + PDF/PNG")
         try:
-            res = _ab.write_aprx(spec, visual, grid, layout=spec.layout)
+            # overlays：同一 OverlaySpec 分发两个 bridge —— 样式参数同源（C8 W3）
+            res = _ab.write_aprx(spec, visual, grid, layout=spec.layout,
+                                 overlays=spec.overlays)
             for key in ("aprx", "pdf", "png"):
                 if res.get(key):
                     results[key] = res[key]
@@ -966,6 +975,11 @@ def emit_map(job: Job) -> dict:
                     job.artifacts.append(res[key])
             if res.get("elements"):
                 results["layout_elements"] = res["elements"]
+            # bridge 侧矢量叠加明细（C8 W3：诊断与验收证据）
+            if spec.overlays:
+                results["arcpy_overlays"] = res.get("overlays") or []
+                if res.get("overlay_errors"):
+                    results["arcpy_overlay_errors"] = res["overlay_errors"]
         except Exception as e:
             results["arcpy_error"] = f"{type(e).__name__}: {e}"
             job.progress("ArcGIS Pro 出图失败", 62, str(e)[:80])
@@ -973,14 +987,20 @@ def emit_map(job: Job) -> dict:
         # --- qgis 分支（现状）：.qgz —— 指向**显示用**栅格，不是浮点分析用栅格 ---
         job.progress("生成 QGIS 工程", 62, ".qgz")
         try:
+            # overlays：同一 OverlaySpec 分发两个 bridge —— 样式参数同源（C8 W3）
             qgz_detail = _qb.write_qgz(
                 spec, visual, grid, _output_path(spec, "deliver", ".qgz"),
-                timeout=240, layout=spec.layout,
+                timeout=240, layout=spec.layout, overlays=spec.overlays,
             )
             qgz = Path(qgz_detail["path"])
             results["qgz"] = str(qgz)
             if qgz_detail.get("layout"):
                 results["qgis_layout"] = qgz_detail["layout"]
+            # bridge 侧矢量叠加明细（C8 W3：诊断与验收证据）
+            if spec.overlays:
+                results["qgis_overlays"] = qgz_detail.get("overlays") or 0
+                if qgz_detail.get("overlay_errors"):
+                    results["qgis_overlay_errors"] = qgz_detail["overlay_errors"]
             results["artifacts"].append(str(qgz))
             job.artifacts.append(str(qgz))
         except Exception as e:
