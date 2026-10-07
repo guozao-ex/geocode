@@ -2,8 +2,8 @@ schema: comet.native.v4
 name: p3-skill-knowledge
 language: zh-CN
 phase: archive
-status: active
-state_version: 17
+status: done
+state_version: 20
 brief: brief.md
 document_constraints_version: 2
 shape_confirmation_hash: ec80068b924eab9118d4ae8f502d3a3968565141632c42a53f64c720ddb533c9
@@ -17,7 +17,7 @@ workspace:
   target_branch: main
   finish: merge
 loop:
-  stage: archive-ready
+  stage: done
   goal_cycle: 2
   iteration: 2
   attempt: 3
@@ -26,7 +26,7 @@ loop:
   no_progress_count: 0
   execution_failure_count: 0
   previous_unresolved_ids: []
-  next_action: archive
+  next_action: null
 acceptance:
   - id: A1
     source: brief.md
@@ -442,5 +442,5 @@ history_overflow:
     recovery: 0
 verification_result: pass
 verification_report: verification.md
-archived: false
+archived: true
 created_at: 2026-10-06T16:39:19.593Z
