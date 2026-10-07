@@ -71,11 +71,14 @@ def write_aprx(
     grid: Grid,
     *,
     layout: LayoutSpec | None = None,
+    overlays: tuple = (),
     timeout: float = 300.0,
 ) -> dict:
     """
     调 arcgispro-py3 生成 .aprx + 出版级 PDF/PNG（LayoutSpec 五要素）。
 
+    overlays 非 () 时叠加矢量图层 —— 消费 OverlaySpec 契约（与 qgis bridge
+    同源样式，不私造矢量参数）。
     失败抛 RuntimeError，消息带 arcpy 侧的原始输出与诊断 JSON。
     """
     py = pro_python()
@@ -97,6 +100,10 @@ def write_aprx(
         "title": (lay.get("title") or spec.id),
         # LayoutSpec 契约透传（呈现层，不私造参数）；缺席 = 不建布局（nolayout 语义统一）
         "layout": lay if lay else None,
+        # OverlaySpec 契约透传（C8 W3；呈现层，不私造矢量样式参数）
+        "overlays": [
+            o.to_dict() if hasattr(o, "to_dict") else dict(o) for o in overlays
+        ] if overlays else None,
     }
 
     script = geoenv.CACHE_DIR / "make_aprx.py"
@@ -180,6 +187,99 @@ def _style_text(el, rgb):
     el.setDefinition(cim)
 
 
+def _hex_rgb(hexcolor):
+    s = str(hexcolor).strip().lstrip("#")
+    if len(s) == 3:
+        s = "".join(ch * 2 for ch in s)
+    if len(s) != 6:
+        return None
+    try:
+        return int(s[0:2], 16), int(s[2:4], 16), int(s[4:6], 16)
+    except ValueError:
+        return None
+
+
+def add_overlays(m, ovs):
+    """
+    矢量叠加图层加载（OverlaySpec 契约，C8 W3 —— 与 qgis bridge 同源样式）。
+    单层失败只留痕不中断整张工程。返回 (已加载名列表, 错误列表)。
+    """
+    added, errors = [], []
+    for i, ov in enumerate(ovs):
+        try:
+            src = str(ov.get("source") or "")
+            if not src:
+                raise ValueError("overlay source 为空")
+            ovl = m.addDataFromPath(src)
+            if ovl is None:
+                # addDataFromPath 对部分格式返回 None 但图层已在；按列表尾兜底
+                existing = [l for l in m.listLayers() if not l.isBasemapLayer]
+                ovl = existing[-1] if existing else None
+            if ovl is None:
+                raise RuntimeError("addDataFromPath 失败: " + src)
+            try:
+                ovl.name = os.path.splitext(os.path.basename(src))[0][:60]
+            except Exception:
+                pass
+            _style_overlay(ovl, ov)
+            added.append(ovl.name)
+        except Exception as exc:
+            errors.append({"index": i, "error": str(exc)[:200]})
+    return added, errors
+
+
+def _style_overlay(ovl, ov):
+    """CIM 最佳努力矢量样式（描边色/线宽/填充/点径/标注）；失败 WARN 不炸。"""
+    rgb = _hex_rgb(ov.get("color") or "#3388ff") or (51, 136, 255)
+    width = float(ov.get("width") or 2.0)
+    fill_hex = ov.get("fill_color")
+    fill_rgb = _hex_rgb(fill_hex) if fill_hex else None
+    try:
+        shape = ovl.shapeType  # 'Point' | 'Polyline' | 'Polygon'
+        cim = ovl.getDefinition("V3")
+        sym = getattr(getattr(getattr(cim, "renderer", None), "symbol", None),
+                      "symbol", None)
+        sls = list(getattr(sym, "symbolLayers", None) or []) if sym is not None else []
+        if shape == "Polygon":
+            for sl in sls:
+                if hasattr(sl, "width"):          # 描边层
+                    sl.width = width
+                    sl.color.values = [rgb[0], rgb[1], rgb[2], 100]
+                elif hasattr(sl, "color"):        # 填充层
+                    if fill_rgb:
+                        sl.color.values = [fill_rgb[0], fill_rgb[1], fill_rgb[2], 100]
+                    else:                          # 不填充 → 全透明
+                        sl.color.values = [rgb[0], rgb[1], rgb[2], 0]
+        elif shape == "Polyline":
+            for sl in sls:
+                if hasattr(sl, "width"):
+                    sl.width = width
+                    sl.color.values = [rgb[0], rgb[1], rgb[2], 100]
+        else:  # Point
+            for sl in sls:
+                if hasattr(sl, "size"):
+                    sl.size = max(2.0, width)
+                if hasattr(sl, "color"):
+                    sl.color.values = [rgb[0], rgb[1], rgb[2], 100]
+        ovl.setDefinition(cim)
+    except Exception as exc:
+        print("WARN: 叠加图层样式失败(%s): %s" % (ovl.name, exc), file=sys.stderr)
+    label_field = ov.get("label_field")
+    if label_field:
+        try:
+            ovl.showLabels = True
+            cim = ovl.getDefinition("V3")
+            for lc in (getattr(cim, "labelClasses", None) or []):
+                try:
+                    lc.expression = "$feature.%s" % label_field
+                    lc.expressionEngine = "Arcade"
+                except Exception:
+                    pass
+            ovl.setDefinition(cim)
+        except Exception as exc:
+            print("WARN: 叠加图层标注失败(%s): %s" % (ovl.name, exc), file=sys.stderr)
+
+
 def main(cfg):
     import arcpy
 
@@ -214,6 +314,9 @@ def main(cfg):
             layer.name = cfg["layer_name"]   # 图例里显示短名，不显示文件全名
         except Exception:
             pass
+
+        # 2b. 矢量叠加（OverlaySpec 契约，C8 W3 —— 与 qgis bridge 同源样式）
+        overlays_added, overlay_errors = add_overlays(m, cfg.get("overlays") or [])
 
         # 3. 布局（layout 缺席 = nolayout：只出 map-only aprx，无布局无导出）
         lyt = None
@@ -448,6 +551,8 @@ def main(cfg):
             "elements": elements,
             "created": created,
             "has_layout": has_layout,
+            "overlays": overlays_added,
+            "overlay_errors": overlay_errors,
         })
     finally:
         shutil.rmtree(workdir, ignore_errors=True)

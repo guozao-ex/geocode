@@ -74,6 +74,7 @@ def write_qgz(
     *,
     timeout: float = 240.0,
     layout: LayoutSpec | None = None,
+    overlays: tuple = (),
 ) -> dict:
     """
     调 QGIS 生成 .qgz。失败抛 RuntimeError，消息里带 QGIS 的原始输出。
@@ -81,6 +82,8 @@ def write_qgz(
     参数 out 由调用方决定，本函数只负责"生成成功或抛出带原因的异常"。
     layout 非 None 时在工程内嵌一个打印布局（图廓/比例尺/指北针/图例/标题/
     经纬网）—— 消费 LayoutSpec 契约，不私造布局参数。
+    overlays 非 () 时叠加矢量图层 —— 消费 OverlaySpec 契约（与 arcpy bridge
+    同源样式，不私造矢量参数）。
     """
     bat = qgis_python()
     if bat is None:
@@ -130,6 +133,10 @@ def write_qgz(
         "layer_name": spec.slug,
         # LayoutSpec 契约透传给 QGIS 侧脚本（呈现层，不私造参数）
         "layout": layout.to_dict() if layout else None,
+        # OverlaySpec 契约透传（C8 W3；呈现层，不私造矢量样式参数）
+        "overlays": [
+            o.to_dict() if hasattr(o, "to_dict") else dict(o) for o in overlays
+        ] if overlays else None,
         "color": {
             "bands": list(render.bands) if render and render.bands else None,
             "band_index": band_index,
@@ -318,6 +325,9 @@ def main(cfg):
 
         proj.addMapLayer(layer)
 
+        # --- 矢量叠加（OverlaySpec 契约，C8 W3）---
+        vlayers, overlay_errors = add_overlays(proj, cfg.get("overlays") or [])
+
         # ★ 必须设默认视图范围。
         # 不设的话工程里就没有 <mapcanvas> 元素，QGIS 打开时画布范围未定义，
         # 用户看到一片空白，得手动「缩放到图层」——会以为工程坏了。
@@ -336,7 +346,7 @@ def main(cfg):
         lay_cfg = cfg.get("layout")
         if lay_cfg:
             try:
-                layout_name = build_layout(proj, layer, lay_cfg)
+                layout_name = build_layout(proj, layer, lay_cfg, vlayers)
             except Exception as exc:
                 import traceback as _tb
                 layout_error = type(exc).__name__ + ": " + str(exc)
@@ -355,6 +365,8 @@ def main(cfg):
             "view_extent_set": view_ok,
             "layout": layout_name,
             "layout_error": layout_error,
+            "overlays": len(vlayers),
+            "overlay_errors": overlay_errors,
             "extent": [ext.xMinimum(), ext.yMinimum(), ext.xMaximum(), ext.yMaximum()],
         }, ensure_ascii=False))
         return 0 if wrote else 3
@@ -362,7 +374,88 @@ def main(cfg):
         qgs.exitQgis()
 
 
-def build_layout(proj, layer, lay_cfg):
+def add_overlays(proj, ovs):
+    """
+    按 OverlaySpec 契约加载矢量叠加图层（样式参数同源于 OverlaySpec，
+    不私造）。单个图层失败只 WARN 留痕，不中断整张工程。
+    返回 (图层列表, 错误列表)。
+    """
+    import os as _os
+
+    from qgis.core import QgsSingleSymbolRenderer, QgsVectorLayer
+    from qgis.PyQt.QtGui import QColor
+
+    made, errors = [], []
+    for i, ov in enumerate(ovs):
+        try:
+            src = str(ov.get("source") or "")
+            if not src:
+                raise ValueError("overlay source 为空")
+            name = _os.path.splitext(_os.path.basename(src))[0][:60] or f"overlay{i}"
+            v = QgsVectorLayer(src, name, "ogr")
+            if not v.isValid():
+                raise ValueError("图层无效: " + src)
+            color = QColor(ov.get("color") or "#3388ff")
+            width = float(ov.get("width") or 2.0)
+            fill = ov.get("fill_color")
+            try:
+                from qgis.core import (
+                    QgsFillSymbol, QgsLineSymbol, QgsMarkerSymbol,
+                )
+                gtype = v.geometryType()  # 0=点 1=线 2=面
+                if gtype == 2:
+                    props = {
+                        "outline_color": color.name(),
+                        "outline_width": width,
+                        "outline_width_unit": "Pixel",
+                        "style": "no" if not fill else "solid",
+                    }
+                    if fill:
+                        props["color"] = QColor(fill).name()
+                    sym = QgsFillSymbol.createSimple(props)
+                elif gtype == 1:
+                    sym = QgsLineSymbol.createSimple({
+                        "line_color": color.name(),
+                        "line_width": width,
+                        "line_width_unit": "Pixel",
+                    })
+                else:
+                    sym = QgsMarkerSymbol.createSimple({
+                        "color": color.name(),
+                        "outline_color": color.name(),
+                        "name": "circle",
+                        "size": max(2.0, width),
+                        "size_unit": "Pixel",
+                    })
+                v.setRenderer(QgsSingleSymbolRenderer(sym))
+            except Exception as exc:
+                errors.append({"index": i, "error": "symbology: " + str(exc)})
+            try:
+                v.setOpacity(float(ov.get("opacity", 1.0)))
+            except Exception:
+                pass
+            label_field = ov.get("label_field")
+            if label_field:
+                try:
+                    from qgis.core import (
+                        QgsPalLayerSettings, QgsTextFormat,
+                        QgsVectorLayerSimpleLabeling,
+                    )
+                    st = QgsPalLayerSettings()
+                    st.fieldName = str(label_field)
+                    st.setFormat(QgsTextFormat())
+                    v.setLabeling(QgsVectorLayerSimpleLabeling(st))
+                    v.setLabelsEnabled(True)
+                except Exception as exc:
+                    errors.append({"index": i, "error": "label: " + str(exc)})
+            proj.addMapLayer(v)
+            made.append(v)
+        except Exception as exc:
+            errors.append({"index": i, "error": str(exc)})
+    return made, errors
+
+
+def build_layout(proj, layer, lay_cfg, vlayers=None):
     """
     内嵌打印布局：消费 LayoutSpec（图廓/比例尺/指北针/图例/标题）。
     经纬网（graticule）用 QgsLayoutItemMapGrid 实现（CRS=4326 度间隔，退化时投影网格）。
@@ -401,10 +494,10 @@ def build_layout(proj, layer, lay_cfg):
     pw, ph = page.pageSize().width(), page.pageSize().height()
     margin = 10
 
-    # 地图主体 + 图廓
+    # 地图主体 + 图廓（矢量叠加层与栅格一起进布局 —— 消费同一 OverlaySpec）
     map_item = QgsLayoutItemMap(lyt)
     map_item.setRect(0, 0, 100, 100)
-    map_item.setLayers([layer])
+    map_item.setLayers([layer] + list(vlayers or []))
     try:
         map_item.setCrs(layer.crs())   # 不设 CRS 会让经纬网度变换退化为空变换
     except Exception:
