@@ -17,6 +17,8 @@
 from __future__ import annotations
 
 import json
+import math
+import os
 import urllib.request
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -40,6 +42,137 @@ _SPEC_BANDS = object()
 
 # map 出口的渲染引擎
 RENDERERS = ("qgis", "arcpy")
+
+
+# ---------------------------------------------------------------------------
+# C6：emit_array 大网格分块（运行时决策，不进 spec / 不进指纹）
+#
+#   现状（direct）：open_dataset 不传 io_chunks → ds.compute() 一次性拼装全量数组，
+#   内存峰值 = 全网格×期×波段×4B，随网格线性涨。
+#   分块（chunked）：open_dataset 时传 io_chunks（xee 原生参数，0.1.2 已核实），
+#   读取循环 + netCDF4 增量落盘，内存峰值 = 单块驻留（常数）。
+#
+#   ⚠️ 分块只准在 open_dataset 时进入 —— 事后 .chunk() 实测触发 xee 内部
+#   select('*')，被 EE 拒绝（Invalid regular expression，见下方 direct 路径注释）。
+# ---------------------------------------------------------------------------
+
+# xee 数组固定 float32（本地驻留 4 B/像素）；GEE computePixels 请求侧按
+# (dtype+1) B 计费掩膜字节，单请求上限 48 MiB（README §9.5 / emit_file 实测同限）。
+_XEE_DTYPE_BYTES = 4
+_GEE_MASK_BYTES = 1
+_GEE_REQUEST_BYTE_LIMIT = 48 * 1024 * 1024
+
+# 单块驻留预算（块内全部波段同时驻留的最坏情形）。32 MiB → ≈8.39M 像素/块，
+# 请求侧 8.39M × 5B ≈ 41.9 MB < 48 MB 天然满足；plan_chunks 内断言防预算上调越限。
+_ARRAY_BLOCK_BUDGET_BYTES = 32 * 1024 * 1024
+
+# 路径选择环境变量（测试钩子）：auto=按阈值；direct/chunked=强制；其他值报可读错误。
+# 不进 ArtifactSpec、不进指纹、不进 daemon/TUI 工具面（运行时决策，非产品行为）。
+ARRAY_PATH_ENV = "GEOCODE_ARRAY_PATH"
+
+
+def plan_chunks(
+    width: int,
+    height: int,
+    n_periods: int = 1,
+    n_bands: int = 1,
+    *,
+    budget_bytes: int = _ARRAY_BLOCK_BUDGET_BYTES,
+    request_byte_limit: int = _GEE_REQUEST_BYTE_LIMIT,
+) -> dict[str, int]:
+    """
+    计算大网格分块形状（纯函数：无 IO、无全局态，同输入同输出）。
+
+    内存账（xee 数组固定 float32）：
+      - 驻留：块像素 × 波段 × 4 B ≤ budget_bytes（块内全部波段同时驻留的最坏情形）；
+      - 请求：块像素 × (4+1) B ≤ GEE 单请求上限（掩膜字节计费）。
+
+    形状策略：期维优先装满（一块装下尽量多的整期），剩余预算给空间，空间块方形化；
+    块尺寸不要求整除网格（xee 自行处理边缘块）。
+
+    返回 {"index": 期块, "width": x块, "height": y块}，直接作为
+    xr.open_dataset(..., engine="ee", io_chunks=...) 的 io_chunks。
+    """
+    if width <= 0 or height <= 0:
+        raise ValueError(f"网格尺寸非法：{width}×{height}")
+    t_total = max(1, int(n_periods))
+    bands = max(1, int(n_bands))
+
+    # 单块（单波段）像素上限：驻留账与请求账取严
+    resident_cap = budget_bytes // (_XEE_DTYPE_BYTES * bands)
+    request_cap = request_byte_limit // (_XEE_DTYPE_BYTES + _GEE_MASK_BYTES)
+    block_px = min(resident_cap, request_cap)
+    if block_px < 1:
+        raise ValueError(
+            f"块预算过小：budget={budget_bytes}B / 波段 {bands} → 单块像素上限 {block_px}"
+        )
+
+    # 期维装满：一块能装几整期；装不下整期就按 1 期切空间
+    grid_px = width * height
+    t_blk = min(t_total, max(1, block_px // grid_px))
+    spatial_px = block_px // t_blk
+
+    # 空间块方形化（空间优先大块），钳制到网格内
+    side = math.isqrt(max(spatial_px, 1))
+    h_blk = min(height, max(side, 1))
+    w_blk = min(width, max(spatial_px // h_blk, 1))
+
+    # 请求侧硬校验（防御预算/形状参数改动越过 GEE 单请求上限）
+    req_bytes = t_blk * h_blk * w_blk * (_XEE_DTYPE_BYTES + _GEE_MASK_BYTES)
+    if req_bytes > request_byte_limit:
+        raise AssertionError(
+            f"分块请求侧超限：{t_blk}×{w_blk}×{h_blk} 像素 × "
+            f"({_XEE_DTYPE_BYTES}+{_GEE_MASK_BYTES})B = {req_bytes} B "
+            f"> GEE 单请求上限 {request_byte_limit} B"
+        )
+    return {"index": int(t_blk), "width": int(w_blk), "height": int(h_blk)}
+
+
+def _array_path_mode(spec: ArtifactSpec, grid: Grid, periods) -> str:
+    """
+    运行时路径选择：est ≥ MAX_DIRECT_PIXELS 走分块，否则现状直读。
+    GEOCODE_ARRAY_PATH 可强制 direct/chunked（A5 交叉验证用测试钩子）。
+    """
+    mode = (os.environ.get(ARRAY_PATH_ENV) or "auto").strip().lower()
+    if mode == "auto":
+        est = (
+            grid.width
+            * grid.height
+            * (len(periods) if periods else 1)
+            * (len(spec.bands) if spec.bands else 1)
+        )
+        return "chunked" if est >= MAX_DIRECT_PIXELS else "direct"
+    if mode in ("direct", "chunked"):
+        return mode
+    raise ValueError(
+        f"环境变量 {ARRAY_PATH_ENV}={mode!r} 不认识。可选：auto / direct / chunked。"
+    )
+
+
+def _open_ee_dataset_lazy(obj, grid: Grid, n_images: int, io_chunks):
+    """
+    xee 惰性打开（分块路径专用打开纪律，与 direct 路径逐项同参——README §8.2 #6/#7）：
+    crs_transform 传 tuple、shape_2d=(width, height)（(x,y) 序）、不做事后 .chunk()。
+    io_chunks 在 open_dataset 时传入 —— 这是分块唯一合法入口。
+    """
+    import warnings
+
+    import xarray as xr
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore", message=r"Unable to retrieve 'system:time_start'",
+        )
+        return xr.open_dataset(
+            obj,
+            engine="ee",
+            crs=grid.crs,
+            crs_transform=tuple(grid.transform),   # xee 要 tuple/Affine，list 会 TypeError
+            shape_2d=(grid.width, grid.height),    # ← (x, y)，已实测确认
+            n_images=n_images,
+            io_chunks=io_chunks,                   # None → xee 自动分块（仅请求侧）
+            ee_init_if_necessary=False,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -439,6 +572,7 @@ def emit_array(job: Job) -> dict:
     out = _output_path(spec, "derived", ".nc")
     out.parent.mkdir(parents=True, exist_ok=True)
 
+    arr: "xr.Dataset | None" = None
     if out.exists() and out.stat().st_size > 4096:
         # 产物缓存：.nc 与 .tif 一样是指纹化的确定性产物（xee computePixels
         # 对同图同参逐位一致），命中即复用 —— 与 _ensure_raster 同一哲学。
@@ -447,36 +581,62 @@ def emit_array(job: Job) -> dict:
         with xr.open_dataset(out) as _ds:
             arr = _ds.load()
     else:
-        arr = _compute_array_via_xee(job, spec, grid, periods)
-        job.progress("落盘", 80, "NetCDF")
+        # C6 运行时路径选择（阈值 + 测试钩子），不进 spec/指纹
+        mode = _array_path_mode(spec, grid, periods)
         tmp = out.with_suffix(out.suffix + ".part")
         try:
-            arr.to_netcdf(tmp)
-            tmp.replace(out)
+            if mode == "chunked":
+                _compute_array_chunked_to_ncdf(job, spec, grid, periods, tmp)
+                tmp.replace(out)
+            else:
+                arr = _compute_array_via_xee(job, spec, grid, periods)
+                job.progress("落盘", 80, "NetCDF")
+                arr.to_netcdf(tmp)
+                tmp.replace(out)
         except BaseException:
             tmp.unlink(missing_ok=True)
             raise
 
     job.check_cancelled()
 
+    if arr is not None:
+        dims = dict(arr.sizes)
+        band_vars = list(arr.data_vars)
+        sample = _array_sample(arr)
+        time_vals = (
+            arr["time"].values
+            if periods is not None and "time" in arr.coords else None
+        )
+    else:
+        # 分块路径：产物已落盘，元数据惰性读回（只取尺寸/坐标/中心 3×3 样本，
+        # 不 load 全量 —— 大网格读回阶段同样内存有界）。复用 _array_sample
+        # 本身保证样本语义与 direct 逐位一致。
+        with xr.open_dataset(out) as _ds:
+            dims = dict(_ds.sizes)
+            band_vars = list(_ds.data_vars)
+            sample = _array_sample(_ds)
+            time_vals = (
+                _ds["time"].values
+                if periods is not None and "time" in _ds.coords else None
+            )
+
     timeseries_info: dict | None = None
     if periods is not None:
-        if "time" not in arr.sizes or arr.sizes["time"] != len(periods):
+        if "time" not in dims or dims["time"] != len(periods):
             raise RuntimeError(
                 f"时序立方体期数不符：期望 {len(periods)} 期，"
-                f"实际 time 维 = {dict(arr.sizes).get('time')}。\n"
+                f"实际 time 维 = {dims.get('time')}。\n"
                 "  常见原因：某期窗口内没有影像（空期塌缩失败）或波段名不一致。"
             )
         timeseries_info = {
             "n_periods": len(periods),
             "periods": [list(p) for p in periods],
             "time_coords": [
-                str(t)[:10] for t in arr["time"].values
-            ] if "time" in arr.coords else None,
+                str(t)[:10] for t in time_vals
+            ] if time_vals is not None else None,
         }
         job.progress("期数校验", 90, f"{len(periods)} 期堆叠完成")
 
-    sample = _array_sample(arr)
     job.artifacts.append(str(out))
     nbytes = out.stat().st_size
     job.progress("完成", 100, f"{out.name} ({nbytes/1048576:.1f} MB)")
@@ -487,8 +647,8 @@ def emit_array(job: Job) -> dict:
         "size_mb": round(nbytes / 1048576, 2),
         "spec_fingerprint": spec.fingerprint(),
         "grid": grid.to_dict(),
-        "dims": dict(arr.sizes),
-        "vars": list(arr.data_vars),
+        "dims": dims,
+        "vars": band_vars,
         "sample": sample,
         **({"timeseries": timeseries_info} if timeseries_info else {}),
     }
@@ -572,6 +732,143 @@ def _compute_array_via_xee(job: Job, spec: ArtifactSpec, grid: Grid, periods) ->
             f"    - 空期（窗内 0 景）→ 调整期窗口或换数据集{diag}\n"
             f"  注意：xee 是『把像素拉到本地算』，不是『服务端算完只回结果』。"
         ) from e
+
+
+def _compute_array_chunked_to_ncdf(
+    job: Job, spec: ArtifactSpec, grid: Grid, periods, tmp_path: Path,
+) -> None:
+    """
+    C6 大网格分块路径：lazy 打开（io_chunks）→ 期×空间两级块循环
+    isel→values→ netCDF4 直写，最后由调用方原子替换。
+
+    内存上界 = 单块驻留（plan_chunks 预算，块内全部波段最坏同时驻留 ≤ 32 MiB）：
+    不做 ds.compute()、不整期/全量驻留；每块一检查点（取消响应）。
+    计算图构建与 direct 同一 source 函数（红线 1），网格同一 compute_grid（红线 2）。
+
+    产物结构与 direct（arr.to_netcdf）逐项对齐：
+      dims (time,y,x)｜float32 波段变量 + xee 原始 attrs｜_FillValue=nan｜
+      scale_factor 属性（float32 下惰性：写不缩放读不缩放，实测）｜
+      time：datetime64 → xarray CF 编码（encode_cf_datetime 与 to_netcdf 同路径），
+      数值型（单期 xee 回退 np.arange）→ 原样 int64 无 units。
+    """
+    import netCDF4 as nc
+    import numpy as np
+    from xarray.coding.times import encode_cf_datetime as _encode_cf_datetime
+
+    from . import source
+    ee, _ = geoenv.init_ee()
+    ee.Initialize()  # 幂等
+
+    job.progress("构建计算图", 8, f"{spec.asset} → ee.Image")
+    n_images = -1
+    if spec.is_timeseries:
+        obj = source.build_cube(spec)
+        n_images = len(periods)   # 期数已知 → 免掉 xee 内部的 collection.size() 慢扫描
+        job.progress("构建计算图", 8, f"{spec.asset} → {len(periods)} 期 ee.ImageCollection")
+    else:
+        obj = source.build_image(spec)
+    job.check_cancelled()
+
+    n_periods = len(periods) if periods else 1
+    if spec.bands:
+        io_chunks = plan_chunks(grid.width, grid.height, n_periods, len(spec.bands))
+        ds = _open_ee_dataset_lazy(obj, grid, n_images, io_chunks)
+    else:
+        # bands=None（吃全部波段）：波段数要进驻留账，先按 xee 自动分块开一次
+        # 只取元数据（波段名），再按真实波段数重开。分块参数必须在 open 时给定。
+        with _open_ee_dataset_lazy(obj, grid, n_images, None) as probe:
+            n_bands = len(probe.data_vars)
+        io_chunks = plan_chunks(grid.width, grid.height, n_periods, n_bands)
+        ds = _open_ee_dataset_lazy(obj, grid, n_images, io_chunks)
+
+    try:
+        t_total = int(ds.sizes["time"])
+        if periods is not None and t_total != len(periods):
+            raise RuntimeError(
+                f"时序立方体期数不符：期望 {len(periods)} 期，"
+                f"实际 time 维 = {t_total}。\n"
+                "  常见原因：某期窗口内没有影像（空期塌缩失败）或波段名不一致。"
+            )
+        h_total = int(ds.sizes["y"])
+        w_total = int(ds.sizes["x"])
+        bands = [str(b) for b in ds.data_vars]
+        t_blk = io_chunks["index"]
+        h_blk = io_chunks["height"]
+        w_blk = io_chunks["width"]
+        n_blocks = (
+            -(-t_total // t_blk) * -(-h_total // h_blk) * -(-w_total // w_blk)
+        )
+
+        job.progress(
+            "打开 xee 数据集", 20,
+            f"{w_total}×{h_total} @ {grid.scale}m，io_chunks={io_chunks}",
+        )
+
+        # 坐标是 xee 本地生成的 numpy 数组（仿射推导），取值不触发 EE 请求
+        time_vals = np.asarray(ds["time"].values)
+        y_vals = np.asarray(ds["y"].values, dtype=np.float64)
+        x_vals = np.asarray(ds["x"].values, dtype=np.float64)
+
+        with nc.Dataset(tmp_path, "w", format="NETCDF4") as f:
+            f.createDimension("time", t_total)
+            f.createDimension("y", h_total)
+            f.createDimension("x", w_total)
+
+            # 变量创建顺序 = 文件变量序。波段在前、坐标在后，与 direct 路径
+            # （arr.to_netcdf 的 data_vars→coords 顺序 B4,B3,B2,time,y,x）逐一对齐，
+            # 消除两路径产物的布局着色歧义（修复轮：Verifier 风险①）。
+            for b in bands:
+                src = ds[b]
+                bv = f.createVariable(
+                    b, np.float32, ("time", "y", "x"),
+                    fill_value=np.float32(np.nan),
+                )
+                for k in src.attrs:
+                    try:
+                        bv.setncattr(k, src.attrs[k])
+                    except Exception:
+                        pass  # 个别不可序列化的 attr 不阻塞产物
+                sf = src.encoding.get("scale_factor", src.attrs.get("scale_factor"))
+                if sf is not None:
+                    bv.scale_factor = sf
+
+            tv = f.createVariable("time", np.int64, ("time",))
+            if time_vals.dtype.kind == "M":   # datetime64 → CF 编码（与 to_netcdf 同路径）
+                num, units, calendar = _encode_cf_datetime(time_vals)
+                tv[:] = np.asarray(num, dtype=np.int64)
+                tv.units = units
+                tv.calendar = calendar
+            else:
+                tv[:] = time_vals.astype(np.int64)
+
+            for name, vals in (("y", y_vals), ("x", x_vals)):
+                cv = f.createVariable(
+                    name, np.float64, (name,), fill_value=np.float64(np.nan),
+                )
+                cv[:] = vals
+
+            done = 0
+            for t0 in range(0, t_total, t_blk):
+                t1 = min(t0 + t_blk, t_total)
+                for y0 in range(0, h_total, h_blk):
+                    y1 = min(y0 + h_blk, h_total)
+                    for x0 in range(0, w_total, w_blk):
+                        x1 = min(x0 + w_blk, w_total)
+                        for b in bands:
+                            block = ds[b].isel(
+                                time=slice(t0, t1), y=slice(y0, y1), x=slice(x0, x1),
+                            ).values
+                            f.variables[b][t0:t1, y0:y1, x0:x1] = np.asarray(
+                                block, dtype=np.float32,
+                            )
+                        done += 1
+                        job.check_cancelled()
+                        job.progress(
+                            "分块拉取+落盘", 20 + 60 * done // n_blocks,
+                            f"块 {done}/{n_blocks}（io_chunks={io_chunks}）",
+                        )
+    finally:
+        ds.close()
 
 
 def _array_sample(arr, rows: int = 3, cols: int = 3) -> dict:
