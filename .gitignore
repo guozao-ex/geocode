@@ -4,9 +4,13 @@ data/
 # ---- 开发文档：个人文档，本地维护；comet 正式产物进版本库 ----
 /docs/*
 !/docs/comet/
+!/docs/knowledge/
 
 # ---- 第三方参考快照（GeoCode-Release v0.9.6 + zip）----
 _src/
+
+# ---- 上游 Skill 集市收录（GeoCode-Release contributions/，出处见 _ref/PROVENANCE.md）----
+_ref/
 
 # ---- 运行态与日志（保留验收证据图）----
 logs/*
