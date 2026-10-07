@@ -2,8 +2,8 @@ schema: comet.native.v4
 name: p2-array-chunking
 language: zh-CN
 phase: archive
-status: active
-state_version: 19
+status: done
+state_version: 21
 brief: brief.md
 document_constraints_version: 2
 shape_confirmation_hash: a7a65b45d5dcaf5a40a46ccd0899c187fd1fed1dd7193d3552e93f150ef17001
@@ -17,7 +17,7 @@ workspace:
   target_branch: main
   finish: merge
 loop:
-  stage: archive-ready
+  stage: done
   goal_cycle: 2
   iteration: 3
   attempt: 2
@@ -26,7 +26,7 @@ loop:
   no_progress_count: 0
   execution_failure_count: 0
   previous_unresolved_ids: []
-  next_action: archive
+  next_action: null
 acceptance:
   - id: A1
     source: specs/p2-array-chunking/spec.md
@@ -512,5 +512,5 @@ history_overflow:
     recovery: 0
 verification_result: pass
 verification_report: verification.md
-archived: false
+archived: true
 created_at: 2026-10-06T16:34:29.405Z
