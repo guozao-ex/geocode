@@ -1,0 +1,446 @@
+schema: comet.native.v4
+name: p3-skill-knowledge
+language: zh-CN
+phase: archive
+status: active
+state_version: 17
+brief: brief.md
+document_constraints_version: 2
+shape_confirmation_hash: ec80068b924eab9118d4ae8f502d3a3968565141632c42a53f64c720ddb533c9
+spec_changes:
+  - capability: p3-skill-knowledge
+    operation: create
+    source: specs/p3-skill-knowledge/spec.md
+workspace:
+  isolation: worktree
+  change_branch: comet/p3-skill-knowledge
+  target_branch: main
+  finish: merge
+loop:
+  stage: archive-ready
+  goal_cycle: 2
+  iteration: 2
+  attempt: 3
+  retry_epoch: 0
+  failed_iteration_count: 0
+  no_progress_count: 0
+  execution_failure_count: 0
+  previous_unresolved_ids: []
+  next_action: archive
+acceptance:
+  - id: A1
+    source: brief.md
+    text: A1 素材落位与出处：`_ref/contributions/<skill>/` 下 5
+      个收录技能结构完整（manifest/meta.json、manifest/README.md、skill/SKILL.md 及
+      references/data/scripts 按上游原样）；`_ref/` 含出处标注（上游 URL + commit hash +
+      抓取日期）并保留上游 LICENSE 与 NOTICE；`_ref/` 加入 .gitignore；`_src/` 零改动。
+    result: passed
+    reason:
+      text: _ref/contributions/ 恰含 5
+        个收录技能（gee-scripting/thematic-map/projection-selection/china-admin-boundaries/china-statistics-data），均含
+        manifest/meta.json、manifest/README.md、skill/SKILL.md 及各自
+        references/templates/scripts/data；数据齐备（china-admin-boundaries 3 份
+        GeoJSON 合计 18,822,419 字节、thematic-map 底图 gpkg 6,721,536
+        字节）。_ref/PROVENANCE.md 记录上游 URL + commit
+        6e3534f7af3675b19bd3c5d54c94022959dccdd2（与 brief D2 观测一致）+ 抓取日期
+        2026-10-07 + sparse-checkout 方式；_ref/LICENSE（MIT ©2025 opencode / ©2026
+        zzhonglei）与 _ref/NOTICE 原文在位。.gitignore:13 的 _ref/ 规则经 git check-ignore
+        -v 实证生效；另对上游同 commit 的
+        contributions/projection-selection/manifest/meta.json
+        做联网抽样核对，字段与本地一致。_src/ 为主工作区 gitignored 本地目录，worktree 内不存在，git diff
+        a35c48b 无任何 _src 改动，零改动成立。
+      truncated: false
+  - id: A2
+    source: brief.md
+    text: A2
+      筛选边界：收录范围与确认清单一致；被弃技能（docx-reader、pdf、xlsx、hello-geocode、update-test）不出现在收录结果与索引收录表中；筛选理由记录于索引。
+    result: passed
+    reason:
+      text: find _ref 全量文件清单仅含 5
+        个收录技能目录，docx-reader/pdf/xlsx/hello-geocode/update-test
+        不在磁盘任何位置；docs/knowledge/README.md 收录表恰 5 行，弃用技能表按类记录理由（docx/pdf/xlsx 为
+        K-Dense Inc. 第三方办公文档技能非 GIS 领域，hello-geocode 为 deprecated 样例，update-test
+        为 deprecated 一次性测试技能）。收录范围与确认清单完全一致。
+      truncated: false
+  - id: A3
+    source: brief.md
+    text: A3 指针与索引：AGENTS.md 含领域知识库指针段（位置、何时读、收录清单），保留既有托管块原文，无大段知识正文；索引
+      `docs/knowledge/README.md` 列出每个收录技能的一句话说明与适配注记（不适用段落 + 对应本项目模块）。
+    result: passed
+    reason:
+      text: AGENTS.md 前 31 行与主工作区原文件 diff 为空（comet-ambient-resume 托管块与图片纪律节原文逐字保留），第
+        33-39 行新增领域知识库指针段仅含位置（_ref/ + docs/knowledge/README.md）、何时读、5
+        技能收录清单与适配提醒，无知识正文摘录；AGENTS.md 经 git add -f 首次入库（git ls-files 与 staged A
+        实证）。docs/knowledge/README.md 对每技能给出版本（与各 meta.json
+        一致）、一句话说明与适配注记，四类不适配映射齐全：RunGeeScript 与 geocode 包→gis/source.py+daemon
+        管线（红线 1）、Playwright MCP→本项目无浏览器工具面（NBS
+        知识保留）、Cartopy/frykit/matplotlib→QGIS/arcpy 双 bridge LayoutSpec
+        契约（references 制图规范仍适用）、GeoAgent/GeoCode 客户端身份→使用注意按注记理解。git check-ignore
+        实证 docs/knowledge 未被忽略（exit=1）；.zcode/ 零改动。
+      truncated: false
+  - id: A4
+    source: brief.md
+    text: A4 新会话可用性：全新 agent 会话（无本对话历史）仅凭 AGENTS.md
+      指针能定位知识索引与知识文件，并正确回答至少一个领域问题（如：中国区域制图选什么投影坐标系；中国省/市/县边界数据从哪获取；专题图图例/比例尺/指北针规范要点）。
+    result: passed
+    reason:
+      text: 本次 Verifier 会话本身即为无 Builder 对话历史的全新会话：仅凭 AGENTS.md 指针段（按字面路径直读 _ref/）定位
+        docs/knowledge/README.md 与知识文件，据 projection-selection
+        SKILL+《中国制图投影坐标系规范》与 china-admin-boundaries SKILL 正确回答候选领域问题——全国横版中国图推荐
+        Albers 等面积圆锥（CGCS2000，中央经线 110°E，标准纬线
+        25°N/47°N，必须绘九段线并加南海附图），气象常用兰伯特等角圆锥（同参数），省级及以下中小比例尺跨带用双标准纬线圆锥投影（1/6
+        法则+几何中心法则），大比例尺法定测绘用高斯-克吕格 3° 带；省市县边界数据用
+        _ref/contributions/china-admin-boundaries/skill/data/ 天地图合规
+        GeoJSON（省34/市375/县2891，WGS84/EPSG:4326），按 adcode 唯一键选单元、明确禁用 OSM/Natural
+        Earth/GADM 中国边界——回答与知识文件内容一致，且不含与本项目红线冲突的工具指令。builder_handoff
+        另记录三轮独立全新会话探针（含修订后 Explore 只读探针）旁证。
+      truncated: false
+  - id: A5
+    source: brief.md
+    text: A5 守护判据：git diff 无管线文件改动；tests/unit 94 用例全绿；smoke 判定按 Verification
+      expectations（端口冲突时等效守护并注明）。
+    result: passed
+    reason:
+      text: Runtime 当前候选（operationId 62af16f1）与前轮两轮检查均 exit 0：pipeline-scope（git diff
+        --name-only a35c48b -- gis/ daemon.py jobs.py emit.py spec.py）两轮日志均为空，全量
+        diff stat vs a35c48b 仅 .gitignore(+4) 与 AGENTS.md(+39)，未跟踪仅
+        docs/comet/changes/ 与 docs/knowledge/（均在 A5 允许范围）；unit-baseline 两轮日志均为
+        Ran 94 tests OK；smoke-map-renderers 离线实测两轮 EXIT=0（exit=map，fingerprint
+        c9243efd40318c85，3 产物完成，不依赖被并行会话占用的 6531 端口）；GEE 类 smoke 按 brief
+        预设的网络约束不运行，以零管线改动+单测全绿+索引/指针静态核查作为等效守护并已在 builder known_limits 注明。
+      truncated: false
+builder_handoff:
+  candidate_id: 498f8642-93ab-465c-b53f-60a9dd69dc15
+  identity_provider: skill-coordinated
+  builder_execution_ref: skill-coordinated:builder:8a50eaef-1230-4e70-9d24-02f5b3ef31ad
+  iteration: 2
+  summary:
+    text: C7 领域知识集成第 2 轮（用户要求修复 Verifier 标记的残余风险后再接受）：R1 AGENTS.md 经 git add -f
+      强制跟踪（原被 .git/info/exclude:14 排除，git ls-files 已确认在册）；R2 _ref/（25MB，含
+      LICENSE/NOTICE/PROVENANCE/contributions）已复制到主工作区
+      D:/DEV/geocode/_ref，主工作区会话即刻可读知识正文；R3/R4 AGENTS.md 指针段与索引使用注意改为'路径相对仓库根 +
+      遵守 .gitignore 的搜索工具可能跳过 _ref/，按字面路径直接读取'，回退指引改为双出处（索引「出处」节或
+      _ref/PROVENANCE.md）消除自引用；R5 全量 diff -r 重跑 5/5
+      技能与上游检出（main@6e3534f）逐字节一致。守护复跑：tests/unit 94 用例 OK、零管线改动（diff 计数
+      0）、修订后新会话探针（Explore 全新只读）凭 AGENTS.md 走通
+      AGENTS.md→索引→projection-selection/thematic-map+5 references
+      并正确回答全国降水专题图投影与制图规范。
+    truncated: false
+  addressed_acceptance_ids:
+    - A1
+    - A2
+    - A3
+    - A4
+    - A5
+  acceptance_review:
+    - id: A1
+      status: implemented-with-evidence
+      evidence:
+        - _ref/contributions/ 下 5
+          个收录技能结构完整（manifest/meta.json、manifest/README.md、skill/SKILL.md 及
+          references/templates/scripts/data）
+        - 全量 diff -r
+          与上游检出（main@6e3534f7af3675b19bd3c5d54c94022959dccdd2）比较：gee-scripting/thematic-map/projection-selection/china-admin-boundaries/china-statistics-data
+          全部 identical（第 2 轮复跑）
+        - _ref/PROVENANCE.md 记录上游 URL + commit
+          6e3534f7af3675b19bd3c5d54c94022959dccdd2 + 抓取日期
+          2026-10-07；_ref/LICENSE（MIT ©2025 opencode/©2026 zzhonglei）与
+          _ref/NOTICE 在位
+        - .gitignore 新增 _ref/ 规则（git check-ignore 命中 .gitignore:13）；_src/
+          零改动（无任何针对 _src 的命令）
+        - R2 修复：_ref/ 已整目录复制到主工作区 D:/DEV/geocode/_ref（25MB），主工作区会话可离线直读
+      note: 素材原样落位、出处链完整；第 2 轮补齐全量字节级一致性证据并完成主工作区副本落位。
+    - id: A2
+      status: implemented-with-evidence
+      evidence:
+        - ls _ref/contributions 仅含 5
+          个收录技能目录；docx-reader、pdf、xlsx、hello-geocode、update-test 不在磁盘
+        - docs/knowledge/README.md「弃用技能（5，不收录）」表记录理由（K-Dense 第三方办公文档技能 /
+          deprecated 样例 / deprecated 一次性测试）
+      note: 收录范围与确认清单一致，未变更。
+    - id: A3
+      status: implemented-with-evidence
+      evidence:
+        - AGENTS.md 保留 comet-ambient-resume 托管块与图片纪律节原文，指针段含索引路径、何时读、收录清单、适配提醒；第
+          2 轮新增'路径均相对仓库根 + 遵守 .gitignore 的搜索工具可能跳过
+          _ref/，按字面路径直接读取'（R3）并将回退指引改为'按知识索引「出处」节或 _ref/PROVENANCE.md'双出处（R4）
+        - R1 修复：git add -f AGENTS.md 后 git ls-files AGENTS.md 确认已跟踪（原
+          .git/info/exclude:14 排除不再影响入库），git status 显示 A（staged）
+        - "docs/knowledge/README.md 收录表含适配注记列（RunGeeScript/Playwright
+          MCP/Cartopy-frykit/geocode 包/客户端身份五类映射到本项目模块）；使用注意 #3 同步双出处与字面路径提示"
+        - .zcode/skills/ 未改动
+      note: 指针段只含指针与清单；AGENTS.md 现已真正随版本库走，'首次入库'与 git 实态一致。
+    - id: A4
+      status: implemented-with-evidence
+      evidence:
+        - 第 1 轮：全新 general-purpose 子代理（agentId
+          agent_f9007a9a-d15e-4c32-a2bc-4ff470520631）仅凭 AGENTS.md
+          正确回答四川县级人口密度专题图投影（等面积 Albers/CGCS2000/双标准纬线法则）与边界数据来源（天地图合规数据、adcode
+          唯一键、禁用 OSM/GADM）两问
+        - 独立 Verifier 复核轮：两个独立全新会话（只读白名单）分别以全国年降水专题图与行政区划边界两问实测通过（见第 1 轮
+          verifier-response）
+        - 第 2 轮修订后复测：全新 Explore 只读探针（agentId
+          agent_74b79f6e-f7f4-448e-b9e5-57a5019a3395）凭修订后 AGENTS.md
+          依序读取索引、projection-selection SKILL+规范、thematic-map SKILL+5 个
+          references，正确回答全国年降水专题图（Albers 110°E/25°N/47°N、九段线与南海附图规范、图例 colorbar
+          条目、GMT 比例尺、全国图指北针可省、经纬网 10° 间隔），全程按字面路径直读命中
+      note: 指针链路在三轮独立新会话实测中均可用，含修订后的最终版本。
+    - id: A5
+      status: implemented-with-evidence
+      evidence:
+        - tests/unit 第 2 轮复跑：94 tests
+          OK（C:/ProgramData/miniforge3/envs/geo/python.exe -m unittest discover
+          -s tests/unit）
+        - git diff --name-only a35c48b -- gis/ daemon.py jobs.py emit.py spec.py
+          计数 0；改动仅
+          .gitignore（M）、AGENTS.md（staged）、docs/comet/changes/、docs/knowledge/
+        - smoke_map_renderers.py 离线实测 EXIT=0（第 1 轮；本轮无代码改动，Runtime 回执仍绑定同内容文件）
+        - GEE 类 smoke 未运行的等效守护理由已在验收材料注明（网络约束：仅限上游公开仓库素材，不触发 GEE）
+      note: 零管线改动 + 单测全绿 + 离线 smoke，等效守护按预设执行并注明。
+  checks:
+    - name:
+        text: tests/unit 离线基线（第 2 轮）
+        truncated: false
+      result: passed
+      note:
+        text: 94 tests OK
+        truncated: false
+    - name:
+        text: 改动范围核查（第 2 轮）
+        truncated: false
+      result: passed
+      note:
+        text: 管线 diff 计数 0；AGENTS.md 已 staged 入库
+        truncated: false
+    - name:
+        text: 上游一致性全量 diff -r（第 2 轮）
+        truncated: false
+      result: passed
+      note:
+        text: 5/5 技能与上游检出 main@6e3534f 逐字节 identical
+        truncated: false
+    - name:
+        text: _ref/ 主工作区副本落位（R2）
+        truncated: false
+      result: passed
+      note:
+        text: D:/DEV/geocode/_ref 25MB，LICENSE/NOTICE/PROVENANCE/contributions 齐全
+        truncated: false
+    - name:
+        text: AGENTS.md 跟踪状态（R1）
+        truncated: false
+      result: passed
+      note:
+        text: git add -f 后 git ls-files 确认在册，.git/info/exclude:14 不再影响
+        truncated: false
+    - name:
+        text: 修订后 A4 新会话探针
+        truncated: false
+      result: passed
+      note:
+        text: Explore 全新只读探针走通 AGENTS.md→索引→知识文件并正确回答领域问题
+        truncated: false
+  checks_truncated: false
+  known_limits:
+    - text: GEE 类
+        smoke（smoke_all/smoke_emit/smoke_three_exits/smoke_timeseries/smoke_tui）未运行：需
+        GEE 网络任务或 daemon，与本 change 已确认网络约束冲突；A5 按预设等效守护执行并已注明
+      truncated: false
+    - text: 主工作区 AGENTS.md 当前仍为无指针段的本地文件（被 .git/info/exclude:14 排除）；AGENTS.md 经本
+        change 跟踪后，merge 收尾时主工作区同名文件将碰撞，计划先把主工作区 AGENTS.md 同步为 worktree
+        版本（内容=原文+指针段）再合并，或按 Runtime 恢复指令处理
+      truncated: false
+    - text: 主工作区 .gitignore 在 merge 前尚无 _ref/ 排除规则，_ref/ 在主工作区暂时显示为未跟踪目录，merge 落地
+        .gitignore 修订后消除
+      truncated: false
+    - text: 台账 C7 行状态更新（docs/README.md）在交付时于主工作区就地完成（本地文件不入库）
+      truncated: false
+  known_limits_truncated: false
+  review: null
+  submitted_at: 2026-10-07T02:35:04.519Z
+blockers: []
+verification:
+  candidate_id: 498f8642-93ab-465c-b53f-60a9dd69dc15
+  identity_provider: skill-coordinated
+  verifier_execution_ref: skill-coordinated:verifier:94783992-ad14-40a6-9d11-21aee4d9d361
+  iteration: 2
+  attempt: 3
+  assurance: skill-coordinated
+  verdict: pass
+  checks:
+    - id: unit-baseline
+      name:
+        text: tests/unit 离线基线（期望 94 tests OK）
+        truncated: false
+      argv_display:
+        - text: -m
+          truncated: false
+        - text: unittest
+          truncated: false
+        - text: discover
+          truncated: false
+        - text: -s
+          truncated: false
+        - text: tests/unit
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 547
+    - id: pipeline-scope
+      name:
+        text: 零管线改动核查（期望无输出）
+        truncated: false
+      argv_display:
+        - text: diff
+          truncated: false
+        - text: --name-only
+          truncated: false
+        - text: a35c48b
+          truncated: false
+        - text: --
+          truncated: false
+        - text: gis/
+          truncated: false
+        - text: daemon.py
+          truncated: false
+        - text: jobs.py
+          truncated: false
+        - text: emit.py
+          truncated: false
+        - text: spec.py
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 73
+    - id: smoke-map-renderers
+      name:
+        text: smoke_map_renderers 离线渲染（期望 EXIT=0）
+        truncated: false
+      argv_display:
+        - text: tests/smoke_map_renderers.py
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 5045
+  summary:
+    text: 5/5 验收通过。本 change 为纯知识/文档资产集成：_ref/ 收录 5 个上游技能结构完整、出处链齐全（URL+commit
+      6e3534f7af3675b19bd3c5d54c94022959dccdd2+抓取日期+LICENSE/NOTICE），gitignore 的
+      _ref/ 排除与 !/docs/knowledge/ 例外均经 check-ignore 实证；筛选边界与确认清单一致，弃用 5
+      技能不在磁盘与索引；AGENTS.md 指针段在逐字保留托管块与图片纪律节前提下首次入库，索引含全部四类适配注记；A4 由本全新 Verifier
+      会话实测走通 AGENTS.md→索引→知识文件链路并正确回答中国制图投影与行政区划边界两问；守护判据复用当前候选 Runtime 两轮证据（94
+      tests OK、零管线改动、离线 smoke EXIT=0）并独立复核日志与 diff。残余风险集中在归档侧（主工作区 AGENTS.md
+      碰撞、主工作区 _ref 的 gitignore、台账 C7 行就地更新），不阻塞本候选判定。
+    truncated: false
+  risks:
+    - text: 归档合并碰撞：主工作区 AGENTS.md 仍为 31 行无指针段的本地文件且被 .git/info/exclude:14 排除；merge
+        收尾前需先把主工作区 AGENTS.md 同步为 worktree 版本（内容=原文+指针段）或按 Runtime 恢复指令处理（builder
+        known_limits 已列预案）。
+      truncated: false
+    - text: 主工作区 .gitignore 在 merge 前尚无 _ref/ 排除规则，主工作区 _ref/（约 25MB 副本，已就位于
+        D:/DEV/geocode/_ref，LICENSE/NOTICE/PROVENANCE/contributions
+        齐全）暂显示为未跟踪目录；随 .gitignore 修订在 merge 落地后消除。
+      truncated: false
+    - text: docs/README.md 台账 C7 行（第 382 行）与 §9.6（第 444 行）在主工作区仍为旧表述（_src 来源、⬜ 未勾选）；按
+        brief 约定属交付时就地更新项，本验证时点尚未执行，归档时须完成。
+      truncated: false
+    - text: _ref 与上游 main@6e3534f 的全量字节级一致性主要依据 Builder 第 2 轮全量 diff -r 证据（5/5
+        identical）；本次验证做了 meta.json 抽样联网核对（一致），未独立重跑 25MB 全量比对。
+      truncated: false
+    - text: GEE 类
+        smoke（smoke_all/smoke_emit/smoke_three_exits/smoke_timeseries/smoke_tui）按网络约束未运行；本
+        change 零代码改动，A5 依 brief 预设以等效守护判定并已注明。
+      truncated: false
+  risks_truncated: false
+  completed_at: 2026-10-07T03:12:37.979Z
+history:
+  - goal_cycle: 1
+    iteration: 0
+    attempt: 0
+    outcome: recovery
+    unresolved_ids: []
+    summary:
+      text: Native Shape artifacts changed or became invalid
+      truncated: false
+    completed_at: 2026-10-06T17:09:06.149Z
+  - goal_cycle: 2
+    iteration: 1
+    attempt: 1
+    outcome: pass
+    unresolved_ids: []
+    summary:
+      text: 五项验收全部通过：素材落位、出处链、筛选边界、指针与索引均亲验属实；A4
+        以两个独立全新会话双问实测通过，其中一个完整走通本地文件链路并用数据文件实测核验。守护判据独立复跑成立（零管线改动、94 用例全绿、离线
+        smoke 通过，GEE 类 smoke 按 brief 预设以等效守护代替并已注明）。主要残余风险在归档侧：AGENTS.md 因共享
+        exclude 未真正入库、_ref/ 需随归档复制到主工作区，均需在归档流程中显式处理。
+      truncated: false
+    completed_at: 2026-10-06T18:16:56.709Z
+  - goal_cycle: 2
+    iteration: 1
+    attempt: 1
+    outcome: recovery
+    unresolved_ids: []
+    summary:
+      text: 用户要求先修复 Verifier 标记的残余风险再接受结果：R1 AGENTS.md 被 .git/info/exclude 排除未入库（改为
+        git add -f 强制跟踪）；R2 _ref/ 复制到主工作区；R3 遵守 .gitignore 的搜索工具发现不了
+        _ref/（AGENTS.md/索引补字面路径读取提示）；R4 AGENTS.md 回退指引引用 _ref/
+        内文件的自引用（改指索引双出处）；R5 上游一致性补全量 diff -r 证据。需求范围不变，回 Build 修订后重新验收。
+      truncated: false
+    completed_at: 2026-10-07T02:29:00.020Z
+  - goal_cycle: 2
+    iteration: 2
+    attempt: 1
+    outcome: execution-error
+    unresolved_ids: []
+    summary:
+      text: 第 2 轮 Verifier（general-purpose 子代理）在返回最终结果前被平台取消：已写出启动回执文件
+        p3-verifier-r2-started.json 与 A4 探针记录
+        p3-verifier-r2-a4-probe.txt，但启动回执未在 Runtime
+        状态登记、最终结果未产生。候选实现未变动，请求按协议重试或重派。
+      truncated: false
+    completed_at: 2026-10-07T02:49:55.704Z
+  - goal_cycle: 2
+    iteration: 2
+    attempt: 2
+    outcome: execution-error
+    unresolved_ids: []
+    summary:
+      text: 原 Verifier 子代理随属主会话终止而丢失：启动回执已确认（confirmed），但 20+ 分钟无结果提交（同类任务正常完成窗口 9-14
+        分钟），属主会话已由用户关闭并将工作移交本会话。按协议登记执行丢失，请求重新派发。
+      truncated: false
+    completed_at: 2026-10-07T02:58:59.812Z
+  - goal_cycle: 2
+    iteration: 2
+    attempt: 3
+    outcome: pass
+    unresolved_ids: []
+    summary:
+      text: 5/5 验收通过。本 change 为纯知识/文档资产集成：_ref/ 收录 5 个上游技能结构完整、出处链齐全（URL+commit
+        6e3534f7af3675b19bd3c5d54c94022959dccdd2+抓取日期+LICENSE/NOTICE），gitignore
+        的 _ref/ 排除与 !/docs/knowledge/ 例外均经 check-ignore 实证；筛选边界与确认清单一致，弃用 5
+        技能不在磁盘与索引；AGENTS.md 指针段在逐字保留托管块与图片纪律节前提下首次入库，索引含全部四类适配注记；A4 由本全新
+        Verifier 会话实测走通 AGENTS.md→索引→知识文件链路并正确回答中国制图投影与行政区划边界两问；守护判据复用当前候选
+        Runtime 两轮证据（94 tests OK、零管线改动、离线 smoke EXIT=0）并独立复核日志与
+        diff。残余风险集中在归档侧（主工作区 AGENTS.md 碰撞、主工作区 _ref 的 gitignore、台账 C7
+        行就地更新），不阻塞本候选判定。
+      truncated: false
+    completed_at: 2026-10-07T03:12:37.979Z
+history_overflow:
+  dropped_entries: 0
+  first_dropped_at: null
+  last_dropped_at: null
+  outcome_counts:
+    pass: 0
+    fail: 0
+    blocked: 0
+    execution-error: 0
+    recovery: 0
+verification_result: pass
+verification_report: verification.md
+archived: false
+created_at: 2026-10-06T16:39:19.593Z
