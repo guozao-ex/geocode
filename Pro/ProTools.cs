@@ -66,6 +66,23 @@ namespace GeoCodePro
             };
         }
 
+        /// <summary>
+        /// async 门面（C11）：UI 线程（Dockpane）入口。await QueuedTask，
+        /// 绝不在 UI 线程 .Result 阻塞（D3 加严：面板按钮一律走本门面）。
+        /// </summary>
+        public static async System.Threading.Tasks.Task<object> CallAsync(string name, Dictionary<string, object?> args)
+        {
+            System.Threading.Tasks.Task<object> t = name switch
+            {
+                "pro_get_view_aoi" => GetViewAoiAsync(args),
+                "pro_add_layer" => AddLayerAsync(args),
+                "pro_export_view" => ExportViewAsync(args),
+                _ => System.Threading.Tasks.Task.FromException<object>(new KeyNotFoundException($"未知工具：{name}")),
+            };
+            return await t.ConfigureAwait(true);
+        }
+
+
         // ------------------------------------------------------------------
         // pro_get_view_aoi：视图 extent → EPSG:4326 → GeoJSON Polygon dict
         // QueuedTask.Run 内触碰 Pro API（MapView.Active / extent / SR 转换）。
@@ -73,7 +90,13 @@ namespace GeoCodePro
 
         private static object GetViewAoi(Dictionary<string, object?> args)
         {
-            return QueuedTask.Run(() =>
+            // 同步门面：仅供后台 HTTP 线程使用（ProTools.Call）；UI 线程勿用（.Result 死锁风险）
+            return GetViewAoiAsync(args).GetAwaiter().GetResult();
+        }
+
+        private static async System.Threading.Tasks.Task<object> GetViewAoiAsync(Dictionary<string, object?> args)
+        {
+            return await QueuedTask.Run(() =>
             {
                 var view = MapView.Active ?? throw new InvalidOperationException("没有活动地图视图。请先在 Pro 打开一个地图。");
                 var extent = view.Extent ?? throw new InvalidOperationException("活动视图没有 extent。");
@@ -98,7 +121,7 @@ namespace GeoCodePro
                     ["type"] = "Polygon",
                     ["coordinates"] = new object[] { ring },
                 };
-            }).Result;
+            }).ConfigureAwait(true);
         }
 
         // ------------------------------------------------------------------
@@ -107,6 +130,12 @@ namespace GeoCodePro
         // ------------------------------------------------------------------
 
         private static object AddLayer(Dictionary<string, object?> args)
+        {
+            // 同步门面：仅供后台 HTTP 线程使用；UI 线程勿用
+            return AddLayerAsync(args).GetAwaiter().GetResult();
+        }
+
+        private static async System.Threading.Tasks.Task<object> AddLayerAsync(Dictionary<string, object?> args)
         {
             var path = args.TryGetValue("path", out var p) ? p?.ToString() : null;
             if (string.IsNullOrWhiteSpace(path))
@@ -120,7 +149,7 @@ namespace GeoCodePro
             // GPKG 可选入参 layer：指定子图层名；缺省按 <file>.gpkg\layer 惯例尝试
             var layerName = args.TryGetValue("layer", out var lv) ? lv?.ToString() : null;
 
-            return QueuedTask.Run(() =>
+            return await QueuedTask.Run(() =>
             {
                 var map = MapView.Active?.Map ?? throw new InvalidOperationException("没有活动地图。请先在 Pro 打开一个地图。");
                 var before = map.Layers.Count;
@@ -135,7 +164,7 @@ namespace GeoCodePro
                     ["layer_count"] = count,
                     ["added"] = count > before,
                 };
-            }).Result;
+            }).ConfigureAwait(true);
         }
 
         /// <summary>
@@ -193,9 +222,15 @@ namespace GeoCodePro
 
         private static object ExportView(Dictionary<string, object?> args)
         {
+            // 同步门面：仅供后台 HTTP 线程使用；UI 线程勿用
+            return ExportViewAsync(args).GetAwaiter().GetResult();
+        }
+
+        private static async System.Threading.Tasks.Task<object> ExportViewAsync(Dictionary<string, object?> args)
+        {
             var outPath = args.TryGetValue("out_path", out var o) ? o?.ToString() : null;
 
-            return QueuedTask.Run(() =>
+            return await QueuedTask.Run(() =>
             {
                 var view = MapView.Active ?? throw new InvalidOperationException("没有活动地图视图。请先在 Pro 打开一个地图。");
                 if (string.IsNullOrWhiteSpace(outPath))
@@ -216,7 +251,7 @@ namespace GeoCodePro
                     ["out_path"] = outPath,
                     ["exported"] = File.Exists(outPath),
                 };
-            }).Result;
+            }).ConfigureAwait(true);
         }
     }
 }
