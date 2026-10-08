@@ -31,7 +31,7 @@ from gis.emit import (
 )
 from gis.grid import Grid
 
-from _helpers import make_spec
+from tests.unit._helpers import make_spec
 
 
 def _grid(width: int, height: int) -> Grid:

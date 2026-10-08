@@ -2,7 +2,7 @@
 
 import unittest
 
-from _helpers import make_spec
+from tests.unit._helpers import make_spec
 
 from gis.spec import LayoutSpec, SpecError
 

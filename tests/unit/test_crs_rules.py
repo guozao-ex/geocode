@@ -2,7 +2,7 @@
 
 import unittest
 
-from _helpers import BEIJING_AOI
+from tests.unit._helpers import BEIJING_AOI
 
 from gis import crs_rules as cr
 

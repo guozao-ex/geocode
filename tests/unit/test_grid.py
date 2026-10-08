@@ -5,7 +5,7 @@
 
 import unittest
 
-from _helpers import make_spec
+from tests.unit._helpers import make_spec
 
 from gis import grid as grid_module
 from gis.grid import Grid, GridError, compute_grid

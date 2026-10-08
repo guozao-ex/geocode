@@ -26,6 +26,7 @@ from gis.grid import compute_grid  # noqa: E402
 from gis.jobs import Job  # noqa: E402
 from gis.spec import ArtifactSpec, bbox_to_geojson  # noqa: E402
 from gis import geoenv  # noqa: E402
+from tests.unit._helpers import expected_p0_fingerprint  # noqa: E402  （金指纹单一事实源，按 PV 时代取值）
 
 
 class ProgressCollector:
@@ -464,7 +465,8 @@ def stage_client(port: int) -> int:
         "aoi": {"type": "Polygon", "coordinates": [[[116.30, 39.95], [116.40, 39.95],
                 [116.40, 40.02], [116.30, 40.02], [116.30, 39.95]]]},
     })
-    print("   指纹 :", r["spec"]["fingerprint"], "（期望 c9243efd…，金值不回退）")
+    expected_fp = expected_p0_fingerprint()   # 单一事实源：按 PROCESSING_VERSION 时代取值
+    print("   指纹 :", r["spec"]["fingerprint"], f"（期望 {expected_fp}，金值不回退）")
     sub = c.submit(kind="emit", exit="array")
     jid = sub["job_id"]
     last = None
@@ -481,7 +483,11 @@ def stage_client(port: int) -> int:
                 print("      体积 :", res.get("size_mb"), "MB")
                 print("      指纹 :", res.get("spec_fingerprint"))
                 print("      dims :", res.get("dims"))
-                ok = res.get("spec_fingerprint", "").startswith("c9243efd")
+                got_fp = res.get("spec_fingerprint", "")
+                ok = got_fp.startswith(expected_fp[:8])
+                if not ok:
+                    print(f"      ❌ 指纹不匹配：got={got_fp!r} 期望前缀={expected_fp[:8]!r}"
+                          f"（时代金值 {expected_fp}）")
             else:
                 print("   ❌ 错误 :")
                 for ln in (j.get("error") or "").splitlines()[:14]:

@@ -71,7 +71,7 @@ class OverlaySpecContractTest(unittest.TestCase):
 
 class SpecOverlaysFieldTest(unittest.TestCase):
     def test_spec_json_round_trip_keeps_overlays(self):
-        from _helpers import make_spec
+        from tests.unit._helpers import make_spec
         s = make_spec(overlays=(OverlaySpec(source="data/deliver/x.gpkg",
                                             label_field="name"),))
         s2 = type(s).from_json(s.to_json())
@@ -79,7 +79,7 @@ class SpecOverlaysFieldTest(unittest.TestCase):
         self.assertEqual(s2.overlays[0].label_field, "name")
 
     def test_spec_to_dict_absent_overlays_is_none(self):
-        from _helpers import make_spec
+        from tests.unit._helpers import make_spec
         self.assertIsNone(make_spec().to_dict()["overlays"])
         self.assertEqual(make_spec().overlays, ())
 
