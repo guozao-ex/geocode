@@ -14,7 +14,7 @@ C1–C9 的归档 brief/spec/verification 与仓库实际状态逐一比对后�
 
 ## 行为规格
 
-### Scenario: SMOKE-A3 指纹断言按时代取值
+### Scenario: SMOKE-A3 指纹断言按时代取值（验收：A1）
 
 验收：A1
 
@@ -24,7 +24,7 @@ C1–C9 的归档 brief/spec/verification 与仓库实际状态逐一比对后�
 
 新增离线用例：断言"指纹期望值取自 `PROCESSING_VERSION` 对应登记项"（例如对 `GOLDEN_FINGERPRINTS[PROCESSING_VERSION]` 存在且非空、且与 `make_p0_spec().fingerprint()` 相等的守护），使该断言在任何一次版本 bump 后自动指向正确值，而非依赖人工修改常量。
 
-### Scenario: SMOKE-B1 离线地图冒烟自足
+### Scenario: SMOKE-B1 离线地图冒烟自足（验收：A2）
 
 验收：A2
 
@@ -37,7 +37,7 @@ C1–C9 的归档 brief/spec/verification 与仓库实际状态逐一比对后�
 
 说明文字更正不改变脚本的判定逻辑与产物；缓存存在且 >4096B 时离线跑 qgis 分支应为 PASS（缓存缺失则走联网路径）。
 
-### Scenario: SMOKE-C1 测试入口稳健性
+### Scenario: SMOKE-C1 测试入口稳健性（验收：A3）
 
 验收：A3
 
@@ -48,7 +48,7 @@ C1–C9 的归档 brief/spec/verification 与仓库实际状态逐一比对后�
 - 实现方式优先"新增 `tests/unit/__init__.py` + 统一包路径导入"；若两种入口无法同时满足，以两种入口都可用为验收底线，允许调整 `_helpers.py` 的位置/名称，但必须同步全部引用点；
 - `docs/README.md` §12 命令速查写明两种入口（dotted-path 若仍需 `-t tests/unit`，明确写出）。
 
-### Scenario: C3 spec 正文与实现一致
+### Scenario: C3 spec 正文与实现一致（验收：A4）
 
 验收：A4
 
@@ -57,7 +57,7 @@ C1–C9 的归档 brief/spec/verification 与仓库实际状态逐一比对后�
 - A3 场景的 `emit_file` 时序实现描述改为**逐期 `getDownloadURL` 拉取 + 本地合并**（实现落点 `gis/emit.py` 的 `_download_stack_to`），并保留实测依据：`toBands()` 单请求 54,613,440B 超 GEE 50,331,648B 上限被 400 拒，逐期请求与单期同限；该路径属已授权的等价实现，产物形态与对齐判据不变；
 - 修正只触及正文表述：验收 ID、场景标题、场景数量、`Acceptance:`/`验收：` 引用均不变；两份文件除这些修正外与归档版本逐行一致。
 
-### Scenario: README 文档订正
+### Scenario: README 文档订正（验收：A5）
 
 验收：A5
 
@@ -72,7 +72,7 @@ C1–C9 的归档 brief/spec/verification 与仓库实际状态逐一比对后�
 - **§8 #18** 关于 Overpass 镜像池的表述与本机实际配置自洽（见 A6）；
 - **§2.4** 目录树含 `_ref/`（不入库的上游知识快照）。
 
-### Scenario: 本地配置补齐 OSM 镜像池
+### Scenario: 本地配置补齐 OSM 镜像池（验收：A6）
 
 验收：A6
 
@@ -83,13 +83,13 @@ C1–C9 的归档 brief/spec/verification 与仓库实际状态逐一比对后�
 - 文件仍为 skip-worktree 入库状态（本地件，不入库）；
 - README §8 #18 的描述与该实配一致。
 
-### Scenario: OSM fixture 归属标注
+### Scenario: OSM fixture 归属标注（验收：A7）
 
 验收：A7
 
 `tests/unit/fixtures/` 下新增说明文件（如 `README.md`），载明 `osm_water_recorded.json` 的来源与许可：数据来自 OpenStreetMap / Overpass API（经 Overpass 录制），© OpenStreetMap contributors，许可 ODbL；并记录录制时间（`osm3s.timestamp_osm_base`）、查询范围与用途（仅测试 fixture）。fixture 正文不改；`tests/unit/test_osm.py` 仍全绿。
 
-### Scenario: 交付形态与可回退性
+### Scenario: 交付形态与可回退性（验收：A8）
 
 验收：A8
 
@@ -100,7 +100,7 @@ C1–C9 的归档 brief/spec/verification 与仓库实际状态逐一比对后�
 3. **本机配置改动**：列出 `geocode.json` 的确切键与值，并给出回退方式（删除 `osm` 键即回默认单点）；
 4. `docs/comet/archive/*/verification.md` 与 `comet-state.yaml` 零修改（归档结论不被补丁触碰）。
 
-### Scenario: C9 归档与路线图收口台账
+### Scenario: C9 归档与路线图收口台账（验收：A9）
 
 验收：A9
 

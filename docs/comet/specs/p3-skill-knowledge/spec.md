@@ -8,7 +8,7 @@
 
 ## 行为规格
 
-### Scenario: 素材落位与出处
+### Scenario: 素材落位与出处（验收：A1）
 
 验收：A1
 
@@ -19,13 +19,13 @@
 - `_ref/` 加入 .gitignore（不入库）；`_src/` 零改动；
 - 网络访问仅限该上游公开仓库，不触发任何 GEE 任务。
 
-### Scenario: 筛选边界
+### Scenario: 筛选边界（验收：A2）
 
 验收：A2
 
 收录范围 = 已确认清单（gee-scripting、thematic-map、projection-selection、china-admin-boundaries、china-statistics-data，共 5 个）；被弃技能 docx-reader、pdf、xlsx、hello-geocode、update-test 不出现在 `_ref/contributions/` 的收录结果与索引收录表中。索引记录筛选理由：docx/pdf/xlsx 为 K-Dense Inc. 第三方办公文档技能（非 GIS 领域），hello-geocode/update-test 为 deprecated 样例与一次性测试技能。
 
-### Scenario: 指针与索引
+### Scenario: 指针与索引（验收：A3）
 
 验收：A3
 
@@ -37,7 +37,7 @@
   - 各技能中的"GeoAgent/GeoCode 客户端"身份表述 → 本项目会话语境，不改变知识内容本身；
 - `.zcode/skills/` 下既有 Comet 技能不变。
 
-### Scenario: 新会话可用性
+### Scenario: 新会话可用性（验收：A4）
 
 验收：A4
 
@@ -47,7 +47,7 @@
 - 中国省/市/县行政区划边界数据从哪获取、怎么选单元（china-admin-boundaries：Tianditu 合规数据、adcode 选择纪律、WGS84/EPSG:4326）；
 - 专题图的图例/比例尺/指北针/经纬网规范要点（thematic-map references）。
 
-### Scenario: 管线零改动守护
+### Scenario: 管线零改动守护（验收：A5）
 
 验收：A5
 

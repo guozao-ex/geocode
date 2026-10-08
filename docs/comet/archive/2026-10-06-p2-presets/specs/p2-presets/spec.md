@@ -1,4 +1,4 @@
-# 数据集预设表（dataset presets）
+# Capability：p2-presets —— 数据集预设表（dataset presets）
 
 `gis/source.py` 的 `DEFAULT_ASSETS` 是「GEE 资产 → 常用约定」的查表：agent 用 `defaults_for(asset)`
 即可拿到可用的 scale / 波段 / dtype / 渲染建议，无需每次查目录。本规格描述该能力在 C4

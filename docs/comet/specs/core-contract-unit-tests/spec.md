@@ -36,3 +36,4 @@
 ### Scenario: 现有资产保护（验收：A6）
 
 `tests/smoke_*.py` 保持原样；`gis/` 无行为性修改。若测试暴露生产缺陷，最小修复须逐条记录于 Builder 交接，且改变像素输出的修复必须 `PROCESSING_VERSION += 1`（红线 3）。
+> ⚠️ 本条为 C1 交付时的范围声明，已被后续 change 修订：`tests/smoke_array_chunking.py`、`tests/smoke_map_renderers.py`、`tests/smoke_timeseries.py` 经 `c10-review-patches`（2026-10-08）更新；`gis/preflight.py` 的探测行为经 `c12-preflight-endpoint-probe`（2026-10-08）更新。见 `docs/comet/specs/README.md`。

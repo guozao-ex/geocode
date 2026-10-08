@@ -9,6 +9,7 @@
 ### Scenario: 同一 GeoTIFF 双出图（验收：A1）
 
 给定同一 spec（含 LayoutSpec）与其 GeoTIFF（优先复用 P0 缓存产物，指纹 `c9243efd`；缺失时经 emit_file 现场生成）：`emit_map(renderer="qgis")` 与 `emit_map(renderer="arcpy")` 各产出一张图，均成功落盘 `data/deliver/`；qgis 路径产出 `.qgz` + PNG（现状格式），arcpy 路径产出 `.aprx` + PDF + PNG。
+> ⚠️ 时代口径：`c9243efd` 是 PV=2 时代指纹。`p2-presets`（C4）已把 `PROCESSING_VERSION` 2→3，当代金指纹为 `b91c09c9c6451c16`；缓存文件名含指纹（`gis/emit.py::_output_path` → `{slug}.{指纹8位}.tif`），故「按指纹指名缓存」的判据必须**随时代取值**（`c10-review-patches` 已把该口径立为验收 A1/A2）。见 `docs/comet/specs/README.md`。
 
 ### Scenario: arcpy 出版图五要素（验收：A2）
 

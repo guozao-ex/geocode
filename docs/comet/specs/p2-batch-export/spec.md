@@ -1,4 +1,4 @@
-# p2-batch-export —— GEE 服务端批处理导出与任务持久化（完整规格）
+# Capability：p2-batch-export —— GEE 服务端批处理导出与任务持久化（完整规格）
 
 本规格描述该 capability 归档后的完整行为：在既有"一份计算图、三出口共享"架构上，新增 GEE 服务端批处理导出（`ee.batch.Export.image.toDrive`，目的地裁决见 brief D10——GCS 因绑卡受阻不可用，toDrive 同为服务端长任务且无支付依赖），把服务端长任务的生命周期映射进现有 `jobs.py` 五态任务模型，并为这些任务提供跨 daemon 重启的最小持久化。
 

@@ -1,4 +1,4 @@
-# Capability：c11-dockpane —— Pro add-in dockpane 状态面板（C9/C10 拆出的唯一遗留项）
+# Capability：dockpane —— Pro add-in 状态面板（change c11-dockpane 交付；C9/C10 拆出的唯一遗留项）
 
 ## 定位
 
@@ -16,7 +16,7 @@ C9 归档产物（既有契约）+ C10 归档产物（流程纪律与订正事�
 
 ## 行为规格
 
-### Scenario: DAML dockpane 声明与开面板入口（离线）
+### Scenario: DAML dockpane 声明与开面板入口（离线）（验收：A1）
 
 验收：A2
 
@@ -28,7 +28,7 @@ className 指向新的 DockPane 类，caption 非空；保持既有 `GeoCodePro_
 离线单测断言：daml 可解析、dockPane 声明存在且 id/className 齐全、开面板按钮存在
 且引用该 dockPane id、既有 ServerStatus 按钮声明不回退。
 
-### Scenario: 面板类与视图（离线构建）
+### Scenario: 面板类与视图（离线构建）（验收：A2）
 
 验收：A3
 
@@ -39,7 +39,7 @@ SDK 现成构建机制（Page 编译），`dotnet build -c Release` 零错误。
 Pro 数据 API（MapView/LayerFactory 等）——面板读写 McpServerHost 状态与结果
 注册表（纯 .NET），工具执行走 ProTools 统一入口。
 
-### Scenario: 服务状态区运行态（需 Pro 会话）
+### Scenario: 服务状态区运行态（需 Pro 会话）（验收：A3）
 
 验收：A6
 
@@ -48,7 +48,7 @@ Pro 数据 API（MapView/LayerFactory 等）——面板读写 McpServerHost 状
 自动刷新：面板可见期间由 UI 线程计时器周期刷新（纯 .NET 状态读取，零 Pro API），
 面板隐藏或关闭时计时器停止。
 
-### Scenario: 端口占用态与重试监听（需 Pro 会话）
+### Scenario: 端口占用态与重试监听（需 Pro 会话）（验收：A4）
 
 验收：A7
 
@@ -56,7 +56,7 @@ Pro 数据 API（MapView/LayerFactory 等）——面板读写 McpServerHost 状
 不空白、不崩溃）；面板附「重试监听」按钮（调用共享 Start()，零 Pro API），
 端口释放后可从面板直接恢复，不必重启 Pro。
 
-### Scenario: 工具区与最近结果区（AOI 一键与复制）（需 Pro 会话）
+### Scenario: 工具区与最近结果区（AOI 一键与复制）（需 Pro 会话）（验收：A5）
 
 验收：A8
 
@@ -66,7 +66,7 @@ Pro 数据 API（MapView/LayerFactory 等）——面板读写 McpServerHost 状
 每工具最近结果 = 时间戳 + 成功/失败 + 摘要 + 失败时错误全文；面板路径与
 6530 HTTP 路径共用同一结果注册表——HTTP 侧执行的结果也会出现在面板。
 
-### Scenario: add_layer / export_view 工具输入与执行（需 Pro 会话）
+### Scenario: add_layer / export_view 工具输入与执行（需 Pro 会话）（验收：A6）
 
 验收：A9
 
@@ -78,7 +78,7 @@ Pro 数据 API（MapView/LayerFactory 等）——面板读写 McpServerHost 状
 `.Result` 阻塞）；Pro API 触碰仍全部在其 QueuedTask.Run 闭包内（D3 纪律不变）；
 两工具连做全程 Pro UI 不冻结。
 
-### Scenario: 构建打包部署链路不变量（离线）
+### Scenario: 构建打包部署链路不变量（离线）（验收：A7）
 
 验收：A4
 
@@ -87,10 +87,11 @@ Pro 数据 API（MapView/LayerFactory 等）——面板读写 McpServerHost 状
 且扩展名固定 `GeoCodePro-MCP.esriAddInX`。既有 zip 布局单测不回退；`gis/preflight.py`
 零改动（`check_pro_addin` 的 installed/deployed/listening 三探测语义不变，既有
 单测不回退）。deploy 后需重启 Pro 使新版本 add-in 生效（AssemblyCache 更新）。
+> ⚠️ 本句「`gis/preflight.py` 零改动 / 三探测语义不变」仅约束 C11 范围，且该语义已被 `c12-preflight-endpoint-probe` 修订（2026-10-08）：`ok` 改以端点为准、`listening` 降为诊断字段；见 `docs/comet/specs/README.md`。
 add-in 标识版本 1.0.0 → 1.1.0（csproj `Version` 与 DAML `AddInInfo.version` 同步），
 `AddInInfo id="GeoCodePro-MCP"` 不变。
 
-### Scenario: 离线回归警戒线（离线）
+### Scenario: 离线回归警戒线（离线）（验收：A8）
 
 验收：A1
 
@@ -100,7 +101,7 @@ add-in 标识版本 1.0.0 → 1.1.0（csproj `Version` 与 DAML `AddInInfo.versi
 4 个既有 skip 保持 skip 集不变；`PROCESSING_VERSION` 仍为 3，金指纹
 `b91c09c9c6451c16` 断言用例不回退。
 
-### Scenario: Pro 会话取证纪律（需 Pro 会话）
+### Scenario: Pro 会话取证纪律（需 Pro 会话）（验收：A9）
 
 验收：A5
 
@@ -111,7 +112,7 @@ Alt+Q 命令搜索）取证：Alt+Q 命令搜索 "GeoCode" 能找到「打开状
 一律写 `$TEMP`（#27：Pro 会话取证与 verify/archive 阶段禁写仓库，含 gitignored
 的 `logs/`）。
 
-### Scenario: 本地件差异清单与改动面白名单（D9 惯例）
+### Scenario: 本地件差异清单与改动面白名单（D9 惯例）（验收：A10）
 
 验收：A10
 
