@@ -10,7 +10,7 @@ import json
 import pathlib
 import unittest
 
-from _helpers import make_spec
+from tests.unit._helpers import make_spec
 
 from gis.aoi import ComplianceError, admin_aoi, osm_boundary_aoi, save_aoi_note
 from gis.grid import compute_grid

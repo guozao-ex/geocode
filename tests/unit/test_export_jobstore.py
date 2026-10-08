@@ -10,7 +10,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from _helpers import make_spec
+from tests.unit._helpers import make_spec
 from gis import export, jobstore
 from gis.jobs import CANCELLED, DONE, FAILED, KIND_EXPORT, QUEUED, RUNNING, Job, Jobs
 from gis.spec import SpecError

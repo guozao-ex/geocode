@@ -9,8 +9,19 @@ C2 冒烟：emit_map 双 renderer。
     python tests/smoke_map_renderers.py qgis graticule   # 经纬网开
     python tests/smoke_map_renderers.py arcpy noframe    # 图廓边框关（arcpy CIM）
 
-数据来源：同指纹（c9243efd）的 derived/*.tif 已在 P0 产出 —— layout/render
-都不参与指纹，这里直接命中 `_ensure_raster` 缓存，**全程离线**。
+数据来源：本脚本用**下方内联的 P0 参数 spec**（`spec = ArtifactSpec(...)`），其栅格缓存
+文件名带**当前时代指纹**（`gis/emit.py::_output_path` → `{slug}.{指纹8位}.tif`）。指纹按
+PV 时代登记，表在 `tests/unit/_helpers.py` 的 GOLDEN_FINGERPRINTS——**不要**把某个时代的
+常量当作现状写在别处。
+
+缓存语义（`gis/emit.py::_ensure_raster`）：目标文件存在且 >4096B 即复用（离线命中）；
+否则**不静默跳过**，会走联网路径（GEE 拉取）现场生成，需要网络与认证。
+
+实测口径（2026-10-08，C10 记录）：本脚本 spec 在 PV=3 下指纹为 `b91c09c9c6451c16`，
+`_ensure_raster` 要找的是 `data/derived/s2_beijing_test.b91c09c9.tif`；而主工作区磁盘上
+现存的 P0 产物是 **PV2 时代**的 `s2_beijing_test.c9243efd.tif`（历史缓存，**当前 PV 下不命中**）。
+因此**当前状态下本脚本实际会走联网路径**；先在当代 PV 下跑一次生成当代缓存，之后即可离线复跑。
+worktree 的 `data/derived/` 常为空，同理默认联网。
 """
 import json
 import sys

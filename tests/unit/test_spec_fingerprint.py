@@ -10,7 +10,12 @@ import dataclasses
 import unittest
 from unittest import mock
 
-from _helpers import make_p0_spec, make_spec
+from tests.unit._helpers import (
+    GOLDEN_FINGERPRINTS,
+    expected_p0_fingerprint,
+    make_p0_spec,
+    make_spec,
+)
 
 from gis import spec as spec_module
 from gis.spec import (
@@ -35,17 +40,9 @@ FINGERPRINT_FIELDS = {
 }
 EXCLUDED_FIELDS = {"id", "note", "tags", "render", "nodata", "layout", "overlays"}
 
-# P0 样本 spec 的指纹金值，按 PROCESSING_VERSION 时代登记（2026-10-06 C3 修复轮预注册）。
-#   PV 2 → c9243efd40318c85：云掩膜+反射率缩放时代，data/derived/ 既有缓存
-#          s2_beijing_test.c9243efd.* 的锚点。
-#   PV 3 → b91c09c9c6451c16：C4 p2-presets（LC08/LC09 补官方 offset -0.2）将 bump 2→3，
-#          落地前先行登记——P0 spec 的指纹只依赖 spec 字段+PV，与预设表无关，可离线预算。
-# 纪律：任何 PV bump 必须在此登记新金值（mock 实算后填入），未登记的 PV 会被断言拦截——
-# 这是红线 3（改变像素输出必须 bump）与红线 8（指纹归属显式化）的联防。
-GOLDEN_FINGERPRINTS: dict[int, str] = {
-    2: "c9243efd40318c85",
-    3: "b91c09c9c6451c16",
-}
+# P0 样本 spec 的指纹金值表（GOLDEN_FINGERPRINTS）已移到 tests/unit/_helpers.py ——
+# **单一事实源**：单测、smoke 脚本（smoke_array_chunking）与文档注释都从那里取值。
+# 表格内容、时代注释与「PV bump 必须登记」纪律见该文件；这里只消费。
 
 
 class FingerprintStabilityTest(unittest.TestCase):
@@ -118,6 +115,23 @@ class GoldenFingerprintTest(unittest.TestCase):
             "同时在 README §9.1 记一笔。",
         )
         self.assertEqual(make_p0_spec().fingerprint(), expected)
+
+    def test_expected_fingerprint_follows_processing_era(self):
+        # C10 A1：期望值必须**随 PROCESSING_VERSION 取值**，不得硬编码某个时代的
+        # 常量（smoke_array_chunking 曾写死 PV2 值 c9243efd，PV bump 后恒 FAIL 误报）。
+        for era, golden in GOLDEN_FINGERPRINTS.items():
+            with self.subTest(era=era):
+                self.assertEqual(expected_p0_fingerprint(era), golden)
+        # 缺省 = 当前时代；当前 PV 必须已登记（未登记即 AssertionError，见下一断言）
+        self.assertEqual(
+            expected_p0_fingerprint(), GOLDEN_FINGERPRINTS[PROCESSING_VERSION]
+        )
+        self.assertTrue(make_p0_spec().fingerprint().startswith(
+            expected_p0_fingerprint()[:8]
+        ))
+        # 未登记的时代必须显式报错，而不是悄悄返回旧值
+        with self.assertRaises(AssertionError):
+            expected_p0_fingerprint(max(GOLDEN_FINGERPRINTS) + 99)
 
     def test_timeseries_fields_absent_by_default(self):
         # 缺省（None）的时序字段不得改变指纹 —— 与金指纹互为表里的显式断言

@@ -16,13 +16,15 @@ C3 时序立方体验收脚本（A1–A4）—— tests/smoke_timeseries.py
 import io
 import json
 import sys
+from pathlib import Path
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
-sys.path.insert(0, ".")
-sys.path.insert(0, "tests/unit")   # _helpers（P0 参数）住在 tests/unit/
+# 仓库根入 path（脚本自带，不依赖运行方注入 PYTHONPATH）——C10 A3：
+# 共享构造改走包路径 tests.unit._helpers，不再把 tests/unit 目录直插 sys.path。
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from _helpers import P0_SPEC_DICT  # noqa: E402  （复用 P0 参数，含金指纹 AOI）
+from tests.unit._helpers import P0_SPEC_DICT  # noqa: E402  （复用 P0 参数，含金指纹 AOI）
 
 from gis.crf_bridge import write_crf  # noqa: E402
 from gis.emit import ALIGN_TOLERANCE, dispatch  # noqa: E402

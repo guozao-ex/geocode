@@ -46,6 +46,14 @@ GEE 直下 GEO_TIFF 为 float64、掩膜像素填充 0、头部 nodata=0.0（三
 9352 个 0 像素与 .nc 的 9352 个 NaN 一一对应）；"有效像素恰为 0 不可与掩膜区分"
 是 GEE 导出格式固有限制，以踩坑记录文档化，不改写头部。
 
+**实现注记（C10 正文订正，2026-10-08）**：本场景的实现走 Constraints 授权的**逐期拉取 + 本地
+合并**路径（落点 `gis/emit.py::_download_stack_to`：逐期 `getDownloadURL` 下 `.tif` 后按网格
+本地堆叠），**而非**上文「期集合在 `source.py` 内 `toBands()` 成单张多波段 ee.Image → 复用
+getDownloadURL 直下」的字面描述——实测 `toBands()` 单请求 9 波段 54,613,440B 超 GEE
+50,331,648B 上限被 400 拒，逐期请求与单期同限（`gis/source.py` 内保留该实测记录）。产物形态与
+对齐判据完全不变：单张 N×B=9 波段、期前缀命名、空间网格同 `compute_grid(spec)`、逐期 vs 单期
+`max|diff| ≤ 0.5` 且掩膜一致。
+
 ### Scenario: CRF 多维栅格（验收：A4）【转换离线，依赖 A1 产物】
 
 A1 的 `.nc` 经 arcpy 桥（arcgispro-py3 `CopyRaster`，subprocess + 文件交换，红线 7）

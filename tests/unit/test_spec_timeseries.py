@@ -9,7 +9,7 @@
 import json
 import unittest
 
-from _helpers import make_spec
+from tests.unit._helpers import make_spec
 
 from gis.spec import (
     MAX_TIME_PERIODS,

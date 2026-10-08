@@ -5,7 +5,7 @@
 
 import unittest
 
-from _helpers import BEIJING_AOI, make_spec
+from tests.unit._helpers import BEIJING_AOI, make_spec
 
 from gis.spec import (
     EXITS,
