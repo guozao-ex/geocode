@@ -199,8 +199,12 @@ class ProAddinPreflightTest(unittest.TestCase):
         self.assertEqual(v["addin_files"], ["fake.esriAddInX"])
         self.assertEqual(v["port"], 6530)
         self.assertIsInstance(v["listening"], bool)
-        if v["installed"] and v["listening"]:
+        # C12：就绪判定以「端点是不是本 add-in」为准（listening 降为诊断字段）
+        self.assertIsInstance(v["endpoint_alive"], bool)
+        if v["installed"] and v["endpoint_alive"]:
             self.assertTrue(r.ok)
+        if v["listening"] and not v["endpoint_alive"]:
+            self.assertFalse(r.ok, "端口有监听但非本 add-in 端点时不得报就绪")
 
     def test_legacy_esriaddin_still_counts_deployed(self):
         """旧扩展名 .esriAddIn 也算部署（兼容探测），但 Pro 3.7 实际不识别——README 已记录。"""
@@ -229,6 +233,17 @@ class ProAddinPreflightTest(unittest.TestCase):
                 "os.environ", {"GEOCODE_PRO_PORT": "6999"}):
             r = preflight.check_pro_addin(addin_dir=Path(td), port=None)
         self.assertEqual(r.value["port"], 6999)
+
+    def test_addin_endpoint_identity_contract(self):
+        """C12（A7/A14）：端点探测基准 = add-in GET / 的 name 字段。
+
+        preflight 靠 `name == "geocode-pro"` 判定「这是本 add-in 的端点」；
+        add-in 側一旦改名/删字段，本断言立即失败，提示同步更新探测基准。
+        """
+        self.assertEqual(preflight.PRO_ENDPOINT_NAME, "geocode-pro")
+        src = (ROOT / "Pro" / "McpServerHost.cs").read_text(encoding="utf-8")
+        self.assertIn('["name"] = "geocode-pro"', src,
+                      "add-in 的 GET / info 必须仍声明 name=geocode-pro（C12 探测基准）")
 
     def test_probe_all_contains_pro_addin(self):
         res = preflight.probe_all()

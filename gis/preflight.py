@@ -362,6 +362,9 @@ def check_gee_runtime() -> Check:
 # ---------------------------------------------------------------------------
 
 PRO_DEFAULT_PORT = 6530
+# 端点身份基准：add-in 的 GET / 响应字段 name（Pro/McpServerHost.cs 的 GET / info）。
+# 契约守卫：tests/unit/test_pro_addin.py 里锁住该字符串，add-in 改名时测试立即失败。
+PRO_ENDPOINT_NAME = "geocode-pro"
 
 
 def _pro_install_dir() -> Path | None:
@@ -392,10 +395,46 @@ def _port_listening(port: int) -> bool:
         s.close()
 
 
-def check_pro_addin(*, port: int | None = None, addin_dir: Path | None = None) -> Check:
-    """Pro 安装 / add-in 是否部署 / 6530 是否监听。
+def _mcp_endpoint_alive(
+    port: int, *, timeout: float = 1.5
+) -> tuple[bool, str | None, str | None]:
+    """端口上是否真的是**本 add-in 的 MCP 端点**（本机 HTTP，零外网）。
 
-    零网络（本机 socket 探测）；addin_dir 参数供单测注入临时目录（mock 路径）。
+    判据：`GET http://127.0.0.1:<port>/` 返回 200、body 可解析为 JSON，且
+    `name == PRO_ENDPOINT_NAME`（add-in 的稳定身份字段，不随版本变化）。
+    返回 `(alive, name, error)`；任何异常或不匹配都归为「不是本端点」，不向上抛。
+    显式禁用代理——本机探测不得被系统代理接管（否则会把代理响应当成端点）。
+
+    有界时延：连接与读取均受 `timeout` 约束，半开/黑洞监听者不会挂住探针。
+    """
+    url = f"http://127.0.0.1:{port}/"
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(url, timeout=timeout) as r:
+            status = getattr(r, "status", 200)
+            body = r.read(64 * 1024)
+    except urllib.error.HTTPError as e:
+        return False, None, f"HTTP {e.code}"
+    except Exception as e:  # URLError / socket.timeout / 连接重置 等
+        return False, None, f"{type(e).__name__}: {e}"
+    if status != 200:
+        return False, None, f"HTTP {status}"
+    try:
+        info = json.loads(body.decode("utf-8", "replace"))
+    except Exception:
+        return False, None, "响应不是合法 JSON"
+    if not isinstance(info, dict):
+        return False, None, "响应不是 JSON 对象"
+    name = info.get("name")
+    if name != PRO_ENDPOINT_NAME:
+        return False, (str(name) if name is not None else None), f"name={name!r}"
+    return True, PRO_ENDPOINT_NAME, None
+
+
+def check_pro_addin(*, port: int | None = None, addin_dir: Path | None = None) -> Check:
+    """Pro 安装 / add-in 是否部署 / 端口上是否为本 add-in 的 MCP 端点。
+
+    零外网（本机 socket + 本机 HTTP 探测）；addin_dir 参数供单测注入临时目录（mock 路径）。
     三个子项分别记录，不整体 ok —— 缺 add-in 或未监听都是常态（Pro 未开）。
     """
     port = port if port is not None else int(
@@ -410,7 +449,11 @@ def check_pro_addin(*, port: int | None = None, addin_dir: Path | None = None) -
     installed = bool(pro_dir and (pro_dir / "ArcGIS.Desktop.Framework.dll").exists())
     deployed = bool(addins)
     listening = _port_listening(port)
-    ok = installed and deployed and listening
+    # 端点探测叠加在零字节 connect 之后：端口没人接就不发 HTTP，省时也避免无谓等待。
+    endpoint_alive, endpoint_name, endpoint_error = (
+        _mcp_endpoint_alive(port) if listening else (False, None, "无监听者")
+    )
+    ok = installed and deployed and endpoint_alive
     if not installed:
         code, reason = "pro-not-installed", (
             "症状：Pro 安装目录未找到。原因：ArcGIS Pro 未安装或非默认路径。"
@@ -424,6 +467,14 @@ def check_pro_addin(*, port: int | None = None, addin_dir: Path | None = None) -
             f"症状：127.0.0.1:{port} 无监听。原因：Pro 未打开，或 add-in 加载失败。"
             "处理：打开 ArcGIS Pro（add-in 随模块自动加载）；"
             "若仍不监听，到 Pro 的 Add-In Manager 检查状态。")
+    elif not endpoint_alive:
+        code, reason = "pro-port-occupied-by-other", (
+            f"症状：127.0.0.1:{port} 有监听者，但不是本 add-in 的 MCP 端点"
+            f"（探测结果：{endpoint_error}）。"
+            "原因：该端口被别的进程占用（上一次验收注入的占位进程、残留实例，"
+            "或别的 HTTP 服务）。"
+            f"处理：netstat -ano | findstr :{port} 找到 PID 并结束它；"
+            "或给 add-in 换端口（设 GEOCODE_PRO_PORT 后重启 Pro）。")
     else:
         code, reason = "", "Pro MCP add-in 就绪"
     return Check(ok, code, reason, value={
@@ -435,6 +486,9 @@ def check_pro_addin(*, port: int | None = None, addin_dir: Path | None = None) -
         "deployed": deployed,
         "port": port,
         "listening": listening,
+        "endpoint_alive": endpoint_alive,
+        "endpoint_name": endpoint_name,
+        "endpoint_error": endpoint_error,
     })
 
 
