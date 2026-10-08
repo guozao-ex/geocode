@@ -17,12 +17,14 @@ from __future__ import annotations
 
 import importlib
 import json
+import os
 import ssl
 import sys
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from . import geoenv
@@ -356,6 +358,87 @@ def check_gee_runtime() -> Check:
 
 
 # ---------------------------------------------------------------------------
+# 探测 2.5：Pro add-in（零网络；C9 p1b-arcgis-addin）
+# ---------------------------------------------------------------------------
+
+PRO_DEFAULT_PORT = 6530
+
+
+def _pro_install_dir() -> Path | None:
+    """Pro 安装目录（ProgramW6432 优先，退回 Program Files）。"""
+    for var in ("ProgramW6432", "ProgramFiles"):
+        base = os.environ.get(var)
+        if base:
+            p = Path(base) / "ArcGIS" / "Pro" / "bin"
+            if p.is_dir():
+                return p
+    return None
+
+
+def _pro_addin_dir() -> Path:
+    """add-in 部署目录：MyDocuments\\ArcGIS\\AddIns\\ArcGISPro。"""
+    docs = Path(os.environ.get("USERPROFILE", "")) / "Documents"
+    return docs / "ArcGIS" / "AddIns" / "ArcGISPro"
+
+
+def _port_listening(port: int) -> bool:
+    """6530 是否有监听者（connect_ex 零字节探测）。"""
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(1.0)
+    try:
+        return s.connect_ex(("127.0.0.1", port)) == 0
+    finally:
+        s.close()
+
+
+def check_pro_addin(*, port: int | None = None, addin_dir: Path | None = None) -> Check:
+    """Pro 安装 / add-in 是否部署 / 6530 是否监听。
+
+    零网络（本机 socket 探测）；addin_dir 参数供单测注入临时目录（mock 路径）。
+    三个子项分别记录，不整体 ok —— 缺 add-in 或未监听都是常态（Pro 未开）。
+    """
+    port = port if port is not None else int(
+        os.environ.get("GEOCODE_PRO_PORT", PRO_DEFAULT_PORT))
+    pro_dir = _pro_install_dir()
+    a_dir = addin_dir if addin_dir is not None else _pro_addin_dir()
+    # Pro 3.7 只识别 .esriAddInX（末尾带 X）；.esriAddIn 会被静默忽略，不算已部署。
+    addins = sorted(
+        p for p in a_dir.glob("*")
+        if p.is_file() and p.suffix.lower() in (".esriaddinx", ".esriaddin")
+    ) if a_dir.is_dir() else []
+    installed = bool(pro_dir and (pro_dir / "ArcGIS.Desktop.Framework.dll").exists())
+    deployed = bool(addins)
+    listening = _port_listening(port)
+    ok = installed and deployed and listening
+    if not installed:
+        code, reason = "pro-not-installed", (
+            "症状：Pro 安装目录未找到。原因：ArcGIS Pro 未安装或非默认路径。"
+            "处理：确认 C:\\Program Files\\ArcGIS\\Pro\\bin 存在。")
+    elif not deployed:
+        code, reason = "pro-addin-not-deployed", (
+            f"症状：{a_dir} 下没有 add-in（*.esriAddInX）。处理："
+            "python scripts/package_pro_addin.py all（build + 部署），然后重启 Pro。")
+    elif not listening:
+        code, reason = "pro-mcp-not-listening", (
+            f"症状：127.0.0.1:{port} 无监听。原因：Pro 未打开，或 add-in 加载失败。"
+            "处理：打开 ArcGIS Pro（add-in 随模块自动加载）；"
+            "若仍不监听，到 Pro 的 Add-In Manager 检查状态。")
+    else:
+        code, reason = "", "Pro MCP add-in 就绪"
+    return Check(ok, code, reason, value={
+        "pro_bin": str(pro_dir) if pro_dir else None,
+        "installed": installed,
+        "addin_dir": str(a_dir),
+        "addin_files": [p.name for p in addins],
+        "addin_zips": [p.name for p in addins],
+        "deployed": deployed,
+        "port": port,
+        "listening": listening,
+    })
+
+
+# ---------------------------------------------------------------------------
 # 汇总
 # ---------------------------------------------------------------------------
 
@@ -366,6 +449,7 @@ def probe_all(*, network: bool = False) -> dict:
     out = {
         "env": probe_env(),
         "gee_local": check_gee_local().as_dict(),
+        "pro_addin": check_pro_addin().as_dict(),
     }
     if network:
         out["gee_network"] = check_gee_network().as_dict()

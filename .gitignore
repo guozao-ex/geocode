@@ -35,3 +35,8 @@ desktop.ini
 /.comet/*
 !/.comet/config.yaml
 # <<< Comet managed project state <<<
+
+# ---- ArcGIS Pro add-in（C9）构建产物与部署 zip 不入库 ----
+Pro/bin/
+Pro/obj/
+Pro/*.addin.zip

@@ -1,0 +1,52 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>GeoCodePro</RootNamespace>
+    <AssemblyName>GeoCodePro</AssemblyName>
+    <!-- Esri 打包 target 用 CodeTaskFactory 会失败（§9.4 已核实）：不用它，打包走 scripts/package_pro_addin.py -->
+    <EnableEsriPackaging>false</EnableEsriPackaging>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <Version>1.0.0</Version>
+    <!-- add-in 部署布局约定：AddInManifest 由我们自己的打包脚本生成/携带，跳过 SDK 的 esriAddIn 生成 -->
+    <ProBin>$(ProgramW6432)\ArcGIS\Pro\bin</ProBin>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- WPF / MessageBox 依赖 -->
+    <FrameworkReference Include="Microsoft.WindowsDesktop.App.WPF" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 直接引用 Pro bin / Extensions 程序集；不用 NuGet / VSIX -->
+    <Reference Include="ArcGIS.Core">
+      <HintPath>$(ProBin)\ArcGIS.Core.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="ArcGIS.CoreHost">
+      <HintPath>$(ProBin)\ArcGIS.CoreHost.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="ArcGIS.Desktop.Framework">
+      <HintPath>$(ProBin)\ArcGIS.Desktop.Framework.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="ArcGIS.Desktop.Core">
+      <HintPath>$(ProBin)\Extensions\Core\ArcGIS.Desktop.Core.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="ArcGIS.Desktop.Mapping">
+      <HintPath>$(ProBin)\Extensions\Mapping\ArcGIS.Desktop.Mapping.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- GPKG 子图层枚举：读 gpkg_contents（Pro bin 自带，不入包） -->
+    <Reference Include="System.Data.SQLite">
+      <HintPath>$(ProBin)\System.Data.SQLite.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+</Project>
