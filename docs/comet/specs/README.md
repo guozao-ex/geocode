@@ -27,6 +27,7 @@ capability 的行为，必须在此**追加一行**并给对方 spec 加注记�
 | `c12-preflight-endpoint-probe`（C12） | ①A16 场景「进程内起假服务器」→「**子进程承载**的假服务器」（`tests/unit` 受离线守卫约束不得导入 `socket`/`http`/`urllib`）；②Scenario 验收引用移入标题并改用 Runtime 验收编号 A9–A17（原先写在标题外独立行、混用 brief 编号） | 2026-10-08（C13） |
 | `dockpane`（C11） | H1 由 `# Capability：c11-dockpane …` 改为 `# Capability：dockpane …`（capability 名对齐目录名，change 名在正文点明） | 2026-10-08（C13） |
 | `p2-presets`（C4）、`p2-batch-export`（C5） | H1 补 `Capability：<目录名> —— ` 前缀（此前为裸标题） | 2026-10-08（C13） |
+| `c13-spec-consistency`（C13，自身） | 本 change 自己的 spec 也曾用「引用写在标题外独立行」形态（与 C12 同类）——**由本 change 新增的结构守卫抓出**（全量测试转红）；已把 12 个 Scenario 的 `（验收：Ax）` 移入标题并改用 Runtime 编号 **A13–A24**、删除 12 行标题外引用，双副本同步 | 2026-10-08（C13 归档后自纠） |
 | `p3-skill-knowledge`(C7) / `p3-osm-overpass`(C8) / `p1b-arcgis-addin`(C9) / `c10-review-patches`(C10) / `dockpane`(C11) | 各 Scenario 标题补 `（验收：Ax）`（共 40 条：5+8+8+9+10），映射见 `spec-revision-list.md` §F6 | 2026-10-08（C13） |
 
 ## 二、发布面四条规范
