@@ -1,0 +1,445 @@
+schema: comet.native.v4
+name: p1b-arcgis-addin
+language: zh-CN
+phase: archive
+status: done
+state_version: 13
+brief: brief.md
+document_constraints_version: 2
+shape_confirmation_hash: 453cc2cf8f1d387ecf7ef267e028252ca7d1beaf9f603db63f4b37c181781632
+spec_changes:
+  - capability: p1b-arcgis-addin
+    operation: create
+    source: specs/p1b-arcgis-addin/spec.md
+workspace:
+  isolation: current
+  change_branch: main
+  target_branch: main
+  finish: null
+loop:
+  stage: done
+  goal_cycle: 1
+  iteration: 2
+  attempt: 1
+  retry_epoch: 0
+  failed_iteration_count: 0
+  no_progress_count: 0
+  execution_failure_count: 0
+  previous_unresolved_ids: []
+  next_action: null
+acceptance:
+  - id: A1
+    source: brief.md
+    text: "**A1【离线】构建**：`dotnet build Pro/GeoCodePro.csproj -c Release`
+      零错误，net10.0-windows，仅引用 Pro bin DLL；构建日志留档。"
+    result: passed
+    reason:
+      text: Runtime offline-build exitCode=0（日志 [build]
+        成功，2026-10-07T23:45:30Z）；csproj 为 net10.0-windows、仅 Reference Pro bin 目录
+        DLL（Private=false，含 System.Data.SQLite，无
+        NuGet/PackageReference）；a1-build.txt 与 runtime 日志双留档；打包 zip 内仅
+        Install/GeoCodePro.dll 一个程序集。
+      truncated: false
+  - id: A2
+    source: brief.md
+    text: "**A2【离线】打包结构**：zip 根 `Config.daml` + `Install/*.dll`，脚本一键出包；结构校验离线单测（读
+      zip 断言布局）。"
+    result: passed
+    reason:
+      text: 独立核验 zip 布局：Pro/GeoCodePro.addin.zip 与已部署 GeoCodePro-MCP.esriAddInX 均为 zip
+        根 Config.daml + Install/GeoCodePro.dll，且两者内嵌 Config.daml 与源文件 sha256
+        一致（24134fb10f89f67d…）；package_pro_addin.py 一键 build/deploy/all；3 项读 zip
+        断言布局的离线单测（PackageStructureTest）在 222 用例全绿运行中通过。
+      truncated: false
+  - id: A3
+    source: brief.md
+    text: "**A3【离线】DAML 合法性**：XML 可解析、模块/按钮声明齐全；部署路径文档化。"
+    result: passed
+    reason:
+      text: "Config.daml 为可解析 XML（DADF 命名空间、AddInInfo + insertModule autoLoad=true +
+        tab/group/button 声明齐全，className 与 C# namespace GeoCodePro
+        对应）；DamlValidityTest 对 zip 内 DAML 做 ElementTree 解析与声明断言（222 绿之一）；部署路径已在
+        docs/README.md 文档化（打包=zip 根 Config.daml + Install 布置、部署到 MyDocuments
+        ArcGIS AddIns ArcGISPro、端口表 6530 现用、踩坑 #24 .esriAddInX）。"
+      truncated: false
+  - id: A4
+    source: brief.md
+    text: "**A4【需 Pro 会话】加载**：add-in 出现在 Pro 的 Add-In Manager 且状态 Enabled（截图留档
+      logs/acceptance/）。"
+    result: passed
+    reason:
+      text: 本轮新增 a4-addin-manager.png 显示 Pro 3.7 加载项管理器将 GeoCode Pro MCP 列为共享加载项（版本
+        1.0.0、目标 3.7、位置 MyDocuments ArcGIS AddIns
+        ArcGISPro），a4-geocode-tab_800.jpg 显示同工程 ribbon 出现 DAML 声明的 GeoCode
+        标签页；本轮独立只读活体探测：netstat 6530 LISTENING、GET / 200、initialize 返回
+        protocolVersion 2025-06-18、tools/list 返回
+        pro_get_view_aoi/pro_add_layer/pro_export_view 三工具；AssemblyCache 内 DLL
+        与候选构建产物 sha256 完全一致（aebfb9a86ff2d99c…），即当前运行二进制=候选。共享加载项视图不显示逐项 Enabled
+        复选，Enabled 以管理器列出 + 标签页 + MCP 活体三证合证。
+      truncated: false
+  - id: A5
+    source: brief.md
+    text: '**A5【需 Pro 会话】当前视图取 AOI 闭环**：`pro_get_view_aoi` 返回的 GeoJSON 通过
+      `ArtifactSpec.validate(exit="map")`，且 `compute_grid()` 离线算出网格（Python
+      侧复验转录留档）——证明"视图 AOI 能进 spec/三出口链路"。'
+    result: passed
+    reason:
+      text: "独立复验通过（在临时目录以 -B 运行，零仓库写入）：a5-aoi-geojson.json 喂
+        gis.spec.ArtifactSpec.validate(exit='map')
+        通过；gis.grid.compute_grid(spec: EPSG:32650, scale=10) 得 crs=EPSG:32650
+        width=13847 height=9430，与 a5-python-closed-loop.txt
+        记录逐位一致；suggest_crs(utm)=EPSG:32650 与所用 CRS 吻合；a5-get-view-aoi.json 与
+        a5-aoi-geojson.json 坐标一致（北京范围 114.906/39.220–116.504/40.052）。"
+      truncated: false
+  - id: A6
+    source: brief.md
+    text: "**A6【需 Pro 会话】加图层**：`pro_add_layer` 对两种格式各验一次——既有 GeoTIFF（如
+      `data/deliver/s2_beijing_test.*.rgb8.tif`）与 GPKG（tests/unit fixtures 边界
+      GeoJSON 经 geopandas 现生成，或 C8 smoke 产物）；图层计数 +1 转录留档。"
+    result: passed
+    reason:
+      text: "终版成功转录 a5a6a7-session3.txt：同会话 GeoTIFF 图层计数
+        1→2（s2_beijing_test.c9243efd.rgb8.tif）、GPKG
+        2→3（layer_name=main.beijing_aoi，added=true）；被加 GPKG 文件独立只读核验确实含要素图层
+        beijing_aoi（gpkg_contents: features/4326），与实现 ProTools.cs 的 file.gpkg 的
+        main.<layer> 复合路径 + gpkg_contents 枚举一致；同批前序转录（a6-a7-tools.txt /
+        session2）保留裸路径失败明证，构成失败→修复→通过链。注：会话证据时刻早于其后 01:44:26
+        的非增量重建（该痕迹特征已在临时沙箱复现，会覆盖更早构建产物），中间构建历史不可完全还原，但转录与候选实现行为一致。"
+      truncated: false
+  - id: A7
+    source: brief.md
+    text: "**A7【需 Pro 会话】导出视图**：`pro_export_view` 出 PNG，PIL 读回断言尺寸 > 0；文件落约定目录。"
+    result: passed
+    reason:
+      text: pro_export_view.png 由我以 PIL 独立读回 size=(1040,692) mode=RGBA（>0），mean=41.76
+        std=91.08 与 a7-verify.txt 一致；session3 转录 out_path 即该文件且文件 mtime
+        与转录同时刻；实现 ExportView 经 QueuedTask.Run + PNGFormat.OutputFileName +
+        view.Export 导出，符合规格。备注：证据走显式 out_path（落 logs/acceptance 约定取证目录），默认
+        data/deliver 分支仅代码审阅。
+      truncated: false
+  - id: A8
+    source: brief.md
+    text: "**A8【离线】回归**：tests/unit 212 基线全绿 + preflight 新增项单测；PV 保持 3、金指纹不回退。"
+    result: passed
+    reason:
+      text: Runtime offline-unit 222 用例全绿（212 基线 + 10 项新增（3 打包结构 + 1 DAML + 5
+        preflight + 1 其它），与新增文件内 def test_
+        数量一致）；PROCESSING_VERSION=3（gis/spec.py）且金指纹表登记 3=b91c09c9c6451c16
+        的测试在该运行中通过（未回退）；preflight.check_pro_addin 实现（Pro 安装/部署/6530 监听，mock
+        注入、零网络）与 5 项离线单测均已核对；git status 确认未改 gis/osm.py、gis/aoi.py 等其它模块。
+      truncated: false
+builder_handoff:
+  candidate_id: e975b3b8-a365-46f8-a769-c6df934c1729
+  identity_provider: skill-coordinated
+  builder_execution_ref: skill-coordinated:builder:c4ce1eac-3169-494b-9a29-ce422c838f30
+  iteration: 2
+  summary:
+    text: "iteration 2 重提交：实现与 iteration 1 完全一致（源码/脚本/单测零改动），仅重新登记候选并补齐 A4
+      证据。恢复背景：iteration 1 候选在 verify 期间被 Comet guard 作废（agent 向仓库写入
+      logs/acceptance/verifier-dispatch-note-attempt2.txt，被判为实现写入 → 候选失效、回退
+      Build iteration 2，见 docs/README.md §8.6 #27）；同一轮派发的只读 Verifier
+      另因供应商计费账户冻结在平台侧失败（宿主记录 status=failed、error=Turn execution failed，底层
+      TerminalStreamChunkError「计费账户已被冻结」），未产出任何验收结论。本轮新增证据：logs/acceptance/a4-a\
+      ddin-manager.png —— ArcGIS Pro 3.7「加载项管理器」截图，GeoCode Pro MCP
+      已列为共享加载项，右侧显示位置
+      C:\\Users\\Administrator\\Documents\\ArcGIS\\AddIns\\ArcGISPro\\GeoCodePr\
+      o-MCP.esriAddInX、版本 1.0.0、目标版本 3.7、创建者 GeoCode。实现要点（同 iteration 1）：手写
+      csproj（net10.0-windows，仅引 Pro bin DLL，EnableEsriPackaging=false）→
+      Config.daml + Install/*.dll 打 zip → 部署 .esriAddInX；Pro 启动即解包到
+      AssemblyCache 并在 127.0.0.1:6530 起 HTTP MCP server（GEOCODE_PRO_PORT
+      可覆盖）；三工具 pro_get_view_aoi / pro_add_layer / pro_export_view 全部经
+      QueuedTask.Run 编组；gis/preflight.py 增 Pro 安装/add-in 部署/6530 监听探测项。离线
+      tests/unit 222 用例全绿、PROCESSING_VERSION=3、金指纹 b91c09c9c6451c16 不回退。"
+    truncated: false
+  addressed_acceptance_ids:
+    - A1
+    - A2
+    - A3
+    - A4
+    - A5
+    - A6
+    - A7
+    - A8
+  acceptance_review:
+    - id: A1
+      status: implemented-with-evidence
+      evidence:
+        - logs/acceptance/a1-build.txt（[build] 成功，dotnet build
+          Pro/GeoCodePro.csproj -c Release 零错误）
+        - Pro/GeoCodePro.csproj（TFM net10.0-windows；直接 Reference
+          $(ProgramW6432)\ArcGIS\Pro\bin\*.dll +
+          Extensions\{Core,Mapping}\*.dll，Private=false；System.Data.SQLite 同
+          bin；EnableEsriPackaging=false）
+        - .gitignore 追加 Pro/bin/、Pro/obj/、Pro/*.addin.zip 段
+      note: 手写 csproj，不用 VS / Pro SDK VSIX / Esri 打包 target。引用的 Framework.dll 实测为 .NET
+        10.0（System.Runtime, Version=10.0.0.0），TFM 一致。构建产物与部署 zip 已入 .gitignore。
+    - id: A2
+      status: implemented-with-evidence
+      evidence:
+        - scripts/package_pro_addin.py（build/deploy/all；zip 根 Config.daml +
+          Install/*.dll；输出 GeoCodePro-MCP.esriAddInX 到
+          MyDocuments/ArcGIS/AddIns/ArcGISPro，并清理旧扩展名文件）
+        - tests/unit/test_pro_addin.py::PackageStructureTest（3 用例：根级 Config.daml
+          存在、Install 含程序集、根只允许 Config.daml+Install）——离线读 zip 断言布局
+        - zip 实测内容：Config.daml + Install/GeoCodePro.dll
+      note: 标准布局打包，一键出包（build+deploy）；结构校验离线单测读 zip 断言。
+    - id: A3
+      status: implemented-with-evidence
+      evidence:
+        - Pro/Config.daml（可解析
+          XML；xmlns=http://schemas.esri.com/DADF/Registry；AddInInfo +
+          insertModule(autoLoad=true) + tab/group/button 声明齐全）
+        - tests/unit/test_pro_addin.py::DamlValidityTest（ElementTree 解析 +
+          模块/按钮声明断言）
+        - logs/acceptance/daml_final.txt（DAML 字节层面 UTF-8 与 XML 可解析核实）
+      note: DAML 对 Pro 官方 ArcGIS.Desktop.Framework.xsd 结构手工比对一致（该 xsd 自身引用未定义类型
+        CT_ExtensionConfig，无法直接 schema 校验）。部署路径在 docs/README.md §8.6 文档化。
+    - id: A4
+      status: implemented-with-evidence
+      evidence:
+        - logs/acceptance/a4-mcp-http.txt（AssemblyCache 落
+          GeoCodePro-MCP/GeoCodePro.dll；netstat 127.0.0.1:6530 LISTENING；GET /
+          返回 serverInfo；initialize 返回 protocolVersion 2025-06-18；tools/list 列出三个
+          pro_* 工具）
+        - logs/acceptance/a4-geocode-tab.png（Pro ribbon 出现 DAML 声明的 GeoCode 标签页
+          = add-in 已加载）
+        - logs/acceptance/a4-addin-manager.png（本轮新增：Pro 3.7「加载项管理器」截图，GeoCode
+          Pro MCP 列为共享加载项并选中，右侧显示 创建者 GeoCode / 版本 1.0.0 / 目标版本 3.7 / 位置
+          C:\Users\Administrator\Documents\ArcGIS\AddIns\ArcGISPro\GeoCodePro-MCP.esriAddInX）
+      note: 三个证据合证「已加载且启用」：① 加载项管理器列出该 add-in（a4-addin-manager.png）；② 同一 Pro 会话 ribbon
+        出现 DAML 声明的 GeoCode 标签页（a4-geocode-tab.png）；③ 同会话 netstat 127.0.0.1:6530
+        LISTENING 且 MCP GET/initialize/tools-list 成功（a4-mcp-http.txt）。本机 Pro 3.7
+        该视图对共享加载项不提供逐项复选开关（「我的加载项」为空，该 add-in 位于共享 AddIns 目录）。add-in 随 Pro
+        启动在后台线程起 HttpListener（默认常量 + GEOCODE_PRO_PORT 覆盖，geocode.json 零改动）；触碰
+        Pro API 的调用全部经 QueuedTask.Run 编组（ProTools.cs）。
+    - id: A5
+      status: implemented-with-evidence
+      evidence:
+        - logs/acceptance/a5-get-view-aoi.json（HTTP 转录：pro_get_view_aoi 返回
+          EPSG:4326 GeoJSON Polygon，北京范围 xmin≈114.906 ymin≈39.220 xmax≈116.504
+          ymax≈40.052）
+        - logs/acceptance/a5-python-closed-loop.txt（Python 侧复验：该 GeoJSON 写进
+          spec.aoi 后 ArtifactSpec.validate(exit='map') 通过 + compute_grid 算出
+          EPSG:32650 13847×9430 网格）
+      note: 视图 extent → 视图坐标系转 EPSG:4326 → GeoJSON Polygon，产物可直接进 spec.aoi
+        并离线算出网格，闭环成立。
+    - id: A6
+      status: implemented-with-evidence
+      evidence:
+        - logs/acceptance/a5a6a7-session3.txt（同一 Pro 会话：加 GeoTIFF layer_count
+          1→2 added=true；加 GPKG layer_count 2→3
+          added=true，layer_name=main.beijing_aoi）
+        - Pro/ProTools.cs::AddLayer/CreateGpkgLayer（.tif 走
+          LayerFactory.CreateLayer(uri)；.gpkg 走 <file.gpkg>\main.<layer> 复合路径）
+      note: 对两种格式各验一次，每次图层计数 +1。GPKG 子图层名经 System.Data.SQLite 读 gpkg_contents 枚举；arcpy
+        addDataFromPath 独立复核同规则（裸路径失败、…\main.beijing_aoi 成功）。
+    - id: A7
+      status: implemented-with-evidence
+      evidence:
+        - logs/acceptance/pro_export_view.png（pro_export_view 输出，exported=true）
+        - logs/acceptance/a7-verify.txt（PIL 读回 size=(1040,692) mode=RGBA；数值核验
+          mean=41.76 std=91.08 非空图）
+      note: 当前视图经 PNGFormat.OutputFileName + view.Export(png) 导出，尺寸取
+        view.GetViewSize()；文件落指定路径。
+    - id: A8
+      status: implemented-with-evidence
+      evidence:
+        - PYTHONPATH=. python -m unittest discover -s tests/unit → Ran 222 tests
+          OK（基线 212 + preflight 新增项）
+        - tests/unit/test_pro_addin.py::ProAddinPreflightTest（5 用例：mock 目录
+          deployed、空目录失败码、失败 reason 可执行、GEOCODE_PRO_PORT 覆盖、probe_all 含
+          pro_addin）
+        - gis/preflight.py::check_pro_addin（Pro 安装 / add-in 部署(*.esriAddInX) /
+          6530 监听三子项，零网络 socket 探测）
+        - gis/spec.py PROCESSING_VERSION=3；tests/unit/test_spec_fingerprint.py
+          金指纹 3:"b91c09c9c6451c16" 通过
+      note: 212 基线不回退（现 222 全绿）；PV 保持 3、金指纹 b91c09c9c6451c16 不回退；未修改
+        gis/osm.py、gis/aoi.py 与 OverlaySpec。按 D8 顺序串行采集证据留档 logs/acceptance/。
+  checks:
+    - name:
+        text: dotnet-build-release
+        truncated: false
+      result: passed
+      note:
+        text: python scripts/package_pro_addin.py all → [build] 成功，零错误
+        truncated: false
+    - name:
+        text: unittest-discover
+        truncated: false
+      result: passed
+      note:
+        text: PYTHONPATH=. python -m unittest discover -s tests/unit → 222 tests OK
+        truncated: false
+    - name:
+        text: pro-mcp-http-transcript
+        truncated: false
+      result: passed
+      note:
+        text: Pro 会话内 curl/urllib 实测 6530 四工具（get_view_aoi/add_layer
+          tif+gpkg/export_view）
+        truncated: false
+  checks_truncated: false
+  known_limits:
+    - text: A4–A7 依赖 ArcGIS Pro 会话（本机 Pro 3.7.0.1901 学习版授权），Runtime 无法自动重放；证据为
+        logs/acceptance/ 下的 HTTP 转录 + 截图，Verifier 可按需查阅。
+      truncated: false
+    - text: ArcGIS.Desktop.Framework.xsd 自身引用未定义类型（CT_ExtensionConfig），无法作为 schema
+        直接校验 DAML；A3 采用结构人工比对 + ElementTree 解析断言。
+      truncated: false
+    - text: dockpane 按需求拆出另行立项（未在本次实现）。
+      truncated: false
+    - text: docs/README.md 属本项目 .gitignore 的本地文档（/docs/* 但
+        !/docs/comet/），已按要求更新但不入库，与前任 change 一致。
+      truncated: false
+    - text: A4 的「状态 Enabled」为三条证据合证（加载项管理器列出 + 同会话 ribbon 的 GeoCode 标签页 + 6530
+        LISTENING 与 MCP 转录）；本机 Pro 3.7 的加载项管理器对「共享加载项」不显示逐项 Enabled
+        复选（「我的加载项」列表为空，该 add-in 位于共享 AddIns 目录）。
+      truncated: false
+    - text: "流程约束（务必遵守）：本 change 处于 Comet verify 阶段时，仓库内任何实现写入（含 gitignored 的
+        logs/）都会让候选失效并回退 Build（guard 理由串 Observed implementation write before
+        <path>，另见 docs/README.md §8.6 #27）。Verifier
+        的派发记录、临时件与任何新增文件一律写到仓库外（$TEMP）。"
+      truncated: false
+  known_limits_truncated: false
+  review: null
+  submitted_at: 2026-10-07T23:45:26.957Z
+blockers: []
+verification:
+  candidate_id: e975b3b8-a365-46f8-a769-c6df934c1729
+  identity_provider: skill-coordinated
+  verifier_execution_ref: skill-coordinated:verifier:28421745-762d-4084-b0aa-610ad139f74a
+  iteration: 2
+  attempt: 1
+  assurance: skill-coordinated
+  verdict: pass
+  checks:
+    - id: offline-build
+      name:
+        text: offline-build
+        truncated: false
+      argv_display:
+        - text: scripts/package_pro_addin.py
+          truncated: false
+        - text: all
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 2067
+    - id: offline-unit
+      name:
+        text: offline-unit
+        truncated: false
+      argv_display:
+        - text: -m
+          truncated: false
+        - text: unittest
+          truncated: false
+        - text: discover
+          truncated: false
+        - text: -s
+          truncated: false
+        - text: tests/unit
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 8701
+  summary:
+    text: 候选 e975b3b8-a365-46f8-a769-c6df934c1729（iteration 2 / attempt
+      1）通过独立验收：A1–A8 共 8 项全部 passed。Runtime 两项检查（offline-build /
+      offline-unit，inputFingerprint a3eb99fe…）与本候选绑定一致并采信；离线侧旁证完整（构建日志、zip
+      布局、DAML、222 用例、PV=3、金指纹 b91c09c9c6451c16）。需 Pro 会话项以只读方式独立确证：A4
+      用本轮新增加载项管理器截图 + 当前 Pro 会话（PID 8064）活体 MCP 探测（6530 LISTENING、initialize
+      2025-06-18、tools/list 三工具），并比对 AssemblyCache DLL 与候选构建 sha256 相同；A5
+      在临时目录独立复现闭环（validate(exit=map) 通过、compute_grid=EPSG:32650
+      13847×9430）；A6/A7 以 session3 终版转录 + GPKG 实含 beijing_aoi + PNG 1040×692
+      独立读回确证。验收期间未向仓库写入任何文件（临时件均在 $TEMP；git status 与验证前一致）。残余不确定性见 risks。
+    truncated: false
+  risks:
+    - text: A6/A5/A7 证据产自 2026-10-08 01:34–01:35 的 Pro 会话；其后 01:44:26
+        发生一次全量（非增量）重建，其痕迹特征（AssemblyInfo/editorconfig/各 cache 全量改写而 GlobalUsings
+        不动）经临时沙箱实验复现，这类重建会覆盖更早构建产物痕迹，故中间构建历史无法完全还原。由于修复后源码自 01:33:01
+        起未再变动、构建确定性、且当前 Pro 会话运行的 AssemblyCache DLL 与候选构建 sha256
+        相同，转录与候选行为一致，按可自洽处理；但受只读纪律约束（禁止调用 pro_add_layer），未能重放 A6 活体调用。
+      truncated: false
+    - text: A4 的『状态 Enabled』无逐项 Enabled 字段截图：本机 Pro 3.7
+        加载项管理器对共享加载项不提供逐项复选显示，采用加载项管理器列出 + ribbon GeoCode 标签页 + 6530 活体 MCP
+        三证合证（builder 已在 known_limits 同款披露）。
+      truncated: false
+    - text: 证据留档 daml_final.txt 的 desktopVersion=3.7.0.1901 与最终源/产物（3.7）不同：该留档早于最后一次
+        Config.daml 编辑约 3 分钟；最终产物已由我直接核验（zip 内 DAML 与源 sha256 一致、结构/解析单测通过），不影响
+        A3 判定。
+      truncated: false
+    - text: 低危：Release 构建有 2 条编译警告（含 GeoCodeModule._host 未使用 CS0169），零错误达标但建议后续清理。
+      truncated: false
+  risks_truncated: false
+  completed_at: 2026-10-08T00:07:10.835Z
+history:
+  - goal_cycle: 1
+    iteration: 1
+    attempt: 1
+    outcome: execution-error
+    unresolved_ids: []
+    summary:
+      text: 派发的只读 Verifier 任务在平台侧执行失败并结束，未返回结果。实证：子代理
+        agent_5442b755-5122-435d-8e55-2db40c928132（description="Verifier A4"，父会话
+        sess_812c5c92）创建于 2026-10-07T17:43:26Z，启动回执 17:43:31Z 已确认；元数据记录
+        updatedAt=completedAt=2026-10-07T17:49:53Z，status="failed"，error="Turn
+        execution failed"，output.txt 仅含 "Turn execution failed"。直接原因（父会话模型 I/O
+        记录 17:49:53.604Z
+        条目）：TerminalStreamChunkError「计费账户已被冻结」；同一时段首次派发也曾返回「已达到使用限制或余额不足」。即失败源于供应商计费账户状态，与候选实现、Runtime
+        检查无关。该 Verifier 运行期间只读取证据（含约 10 张截图），未提交
+        verifier-response，未产生可用的独立验收结论。候选与检查保留：candidateId
+        257891db-481d-411f-9c73-7e4827dcb98b、inputFingerprint 6870eaa4…
+        未变，Runtime 两项检查 offline-build 与 offline-unit 均为 passed（exitCode 0，日志在
+        .comet/runtime/native/changes/p1b-arcgis-addin/logs/checks/）。恢复方式变化：(1)
+        账户冻结已解除——当前会话对同一模型路由（new-provider-3/deepseek/deepseek-v4.1-flash）的调用正常返回；(2)
+        重新派发的 Verifier 将遵守仓库 AGENTS.md「图片读取纪律」——每批最多 3 张图、只读 ≤800px 的
+        *_small.jpg（各 ≤52KB），不读 300–550KB 的 PNG
+        截图，避免单请求体量再次触及网关限额。无需用户恢复文件、服务或进程。
+      truncated: false
+    completed_at: 2026-10-07T23:20:46.446Z
+  - goal_cycle: 1
+    iteration: 1
+    attempt: 2
+    outcome: recovery
+    unresolved_ids: []
+    summary:
+      text: Observed implementation write before
+        logs/acceptance/verifier-dispatch-note-attempt2.txt
+      truncated: false
+    completed_at: 2026-10-07T23:25:07.771Z
+  - goal_cycle: 1
+    iteration: 2
+    attempt: 1
+    outcome: pass
+    unresolved_ids: []
+    summary:
+      text: 候选 e975b3b8-a365-46f8-a769-c6df934c1729（iteration 2 / attempt
+        1）通过独立验收：A1–A8 共 8 项全部 passed。Runtime 两项检查（offline-build /
+        offline-unit，inputFingerprint a3eb99fe…）与本候选绑定一致并采信；离线侧旁证完整（构建日志、zip
+        布局、DAML、222 用例、PV=3、金指纹 b91c09c9c6451c16）。需 Pro 会话项以只读方式独立确证：A4
+        用本轮新增加载项管理器截图 + 当前 Pro 会话（PID 8064）活体 MCP 探测（6530 LISTENING、initialize
+        2025-06-18、tools/list 三工具），并比对 AssemblyCache DLL 与候选构建 sha256 相同；A5
+        在临时目录独立复现闭环（validate(exit=map) 通过、compute_grid=EPSG:32650
+        13847×9430）；A6/A7 以 session3 终版转录 + GPKG 实含 beijing_aoi + PNG 1040×692
+        独立读回确证。验收期间未向仓库写入任何文件（临时件均在 $TEMP；git status 与验证前一致）。残余不确定性见 risks。
+      truncated: false
+    completed_at: 2026-10-08T00:07:10.835Z
+history_overflow:
+  dropped_entries: 0
+  first_dropped_at: null
+  last_dropped_at: null
+  outcome_counts:
+    pass: 0
+    fail: 0
+    blocked: 0
+    execution-error: 0
+    recovery: 0
+verification_result: pass
+verification_report: verification.md
+archived: true
+created_at: 2026-10-07T13:31:19.530Z
