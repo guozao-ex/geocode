@@ -1,0 +1,698 @@
+schema: comet.native.v4
+name: c11-dockpane
+language: zh-CN
+phase: archive
+status: done
+state_version: 24
+brief: brief.md
+document_constraints_version: 2
+shape_confirmation_hash: 28243fb9200d261ad0049f5f9e527d6252a15b304ef5f15488f91af527814a76
+spec_changes:
+  - capability: dockpane
+    operation: create
+    source: specs/dockpane/spec.md
+workspace:
+  isolation: worktree
+  change_branch: comet/c11-dockpane
+  target_branch: main
+  finish: merge
+loop:
+  stage: done
+  goal_cycle: 1
+  iteration: 4
+  attempt: 1
+  retry_epoch: 0
+  failed_iteration_count: 1
+  no_progress_count: 0
+  execution_failure_count: 0
+  previous_unresolved_ids: []
+  next_action: null
+acceptance:
+  - id: A1
+    source: brief.md
+    text: A1 离线回归不回退：`PYTHONPATH=. python -m unittest discover -s tests/unit` 与
+      `python -m unittest tests.unit.test_spec_basics`（仓库根、geo env）两条入口全绿；总用例数 ≥
+      223 且新增用例计入（test_pro_addin.py 增 DAML/打包静态检查若干条）；skip 集 = 既有 4
+      条不变；金指纹断言用例绿（PV3 = b91c09c9c6451c16）。
+    result: passed
+    reason:
+      text: 独立实跑（geo env, PYTHONPATH=.）：discover -s tests/unit = Ran 233
+        OK（>=223，iter3 为 232，+1 计数语义断言，计入）；dotted tests.unit.test_spec_basics =
+        Ran 20 OK；runtime skips=0（zip 在，既有 4 条 skipUnless 门控用例集合未变）；PV3 金指纹
+        b91c09c9c6451c16 断言绿。证据 %TEMP%\c11-verifier\a1r4-discover.txt /
+        a1r4-dotted.txt / a1r4-discover-v.txt。
+      truncated: false
+  - id: A2
+    source: brief.md
+    text: A2 DAML dockpane 声明与入口：`Pro/Config.daml` 可解析 XML；`GeoCodePro_Module` 含
+      dockPane 声明（id `GeoCodePro_Dockpane`、className 指向新 DockPane 类、caption
+      非空）；GeoCode 选项卡新增「打开状态面板」按钮声明且激活该 dockpane id；既有 `GeoCodePro_ServerStatus`
+      按钮、tabs/groups 结构与 C9 语义一致（零挪动）。判据 = 离线单测新增断言全绿。
+    result: passed
+    reason:
+      text: 独立解析 Pro/Config.daml：XML 可解析；insertModule GeoCodePro_Module 含 dockPane
+        id=GeoCodePro_Dockpane、className=GeoCodePro.GeoCodeDockpaneViewModel、caption='GeoCode
+        Status'（非空）、content className=GeoCodePro.GeoCodeDockpaneView；GeoCode 选项卡
+        group GeoCodePro_Group 新增 button
+        refID=GeoCodePro_ShowDockpane（caption='GeoCode 状态面板'，class
+        ShowDockpaneButton，OnClick→DockPaneManager.Find('GeoCodePro_Dockpane').Activate()）；既有
+        GeoCodePro_ServerStatus 与 tabs/groups 结构零挪动（diff
+        仅追加）；DockpaneDamlTest/StatusSourceTest 全绿。证据 a2r4-daml.json /
+        a4r4-proaddin.txt。
+      truncated: false
+  - id: A3
+    source: brief.md
+    text: A3 构建与打包：`dotnet build Pro/GeoCodePro.csproj -c Release` 零错误；新增 XAML 走
+      Page 构建动作编译进程序集；`python scripts/package_pro_addin.py build` 零错误退出并产出
+      `Pro/GeoCodePro.addin.zip`；既有 zip 布局断言（根 Config.daml + Install/*.dll）不回退。
+    result: passed
+    reason:
+      text: 自跑双路 Release 重建（两个不同路径长度临时副本，其一 git init+commit、另一无 .git）：DLL sha256 均为
+        f750e6245e64b3be084dff3d992a9ee12b6673fa80c3230ba1365288ecf2ce42（=期望）；Release
+        bin 无 pdb，Debug 构建仍产 GeoCodePro.pdb（符号按配置拆分成立）；ResourceReader 读
+        obj/.../GeoCodePro.g.resources 含键
+        geocodedockpaneview.baml（DebugType=none 未破坏 XAML→BAML）；zip
+        Pro/GeoCodePro.addin.zip=55f600b7... 且与部署件 .esriAddInX 逐字节相同(cmp
+        IDENTICAL)，zip 内 Install/GeoCodePro.dll=f750e624...；Runtime 绑定检查
+        offline-build-deploy(package_pro_addin.py all) exit0，zip 布局 根
+        Config.daml + Install/*.dll 不回退。证据 a3r4-build.log / a3r4-resources.txt。
+      truncated: false
+  - id: A4
+    source: brief.md
+    text: A4 preflight 与部署链路不回退：`gis/preflight.py` 零 diff；test_pro_addin.py 既有 10
+      条（preflight mock、端口覆盖、zip 布局、DAML 基础）全绿；部署链路不变量（.esriAddInX
+      扩展名、部署目录）在脚本与测试中不变。
+    result: passed
+    reason:
+      text: git diff main -- gis/ 与 gis/preflight.py、scripts/ 均为 0
+        行（脚本/测试层不变量未动）；tests.unit.test_pro_addin = Ran 20 OK：main 的 10
+        条同名用例全部保留（comm 无 REMOVED），新增 10 条（DAML/打包/计数语义静态断言）；部署 .esriAddInX 扩展名与
+        AddIns 目录不变量在零 diff 脚本与既有用例中不变。证据 a4r4-proaddin.txt /
+        a4r4-main-names.txt / a4r4-now-names.txt。
+      truncated: false
+  - id: A5
+    source: brief.md
+    text: A5 dockpane 可见可停靠（需 Pro 会话）：deploy 后启动 Pro 3.7，Alt+Q 命令搜索 "GeoCode"
+      能找到「打开状态面板」入口并激活；面板窗口出现且可停靠（拖到侧边不消失，取消停靠后仍正常）；证据 = UIA 转录 + 截图（≤800px
+      JPEG，$TEMP）。
+    result: passed
+    reason:
+      text: "活会话（Pro 3.7，session 1，加载沙箱 aprx）：Alt+Q 搜 'GeoCode' —— 第 1 次查询 items=9
+        未命中（最近/建议分组），按 #29 重试后（第 2 次查询，session3 为第 2 次）命中 MenuItem N='GeoCode
+        状态面板' Aid='GeoCodePro_ShowDockpane'；InvokePattern.Invoke() → 面板出现
+        offscreen=False，父节点 ControlType.TabItem N='GeoCode Status'
+        Aid='GeoCodePro_DockpaneTab'（停靠在右侧 dock，可停靠/可激活）；截图
+        a5r4-panel_small.jpg（800x450）显示右侧 'GeoCode Status' 面板与状态/工具/最近结果三区。证据
+        a5r4-try.txt / a7r4-open.txt。"
+      truncated: false
+  - id: A6
+    source: brief.md
+    text: A6 服务状态区与真实状态一致（需 Pro 会话）：面板运行中态显示端口 = 6530（或 GEOCODE_PRO_PORT
+      覆盖值）与请求/错误计数，且计数随工具执行增长；与 `curl http://127.0.0.1:6530/` 及 `probe_all()` 的
+      pro_addin listening:true 交叉一致。
+    result: passed
+    reason:
+      text: "本轮新增判据两条路径分别取证（默认 6530 与覆写 6531）：面板点 AoiButton → 工具执行 +1 且 HTTP
+        请求不变（6530: HTTP 0 / tool 1；6531: HTTP 0 / tool 1）；GET / → HTTP
+        +1、工具不变（6530:1/1；6531:1/1）；POST /mcp tools/call → HTTP +1 且工具执行
+        +1（6530:2/2；6531:2/2）；零 UI 交互自动刷新：3×GET 后 UI 空转读取 HTTP 2→5，且同会话计时测试
+        T0=HTTP5 → 发一个请求 → 965 ms 后 DetailText 变 HTTP6（1s DispatcherTimer）；端口显示
+        6531/6530 随 GEOCODE_PRO_PORT 变化（不写死）；与 curl http://127.0.0.1:6530/
+        (v1.1.0) 及 preflight.probe_all() pro_addin listening:true port=6530
+        deployed:true 交叉一致。证据
+        a6r4-baseline/panel-aoi/after-get/after-call/after-3get/timer/6531-*
+        、a6r4-probe-all.json。"
+      truncated: false
+  - id: A7
+    source: brief.md
+    text: A7 端口占用态与恢复（需 Pro 会话）：注入端口占用后面板显示可读中文「未监听 + 端口被占用（LastError
+      摘要）」；释放端口后点「重试监听」回到运行中态（6530 重新监听、preflight listening 恢复 true）；注入/释放转录留档
+      $TEMP。
+    result: passed
+    reason:
+      text: "活会话：注入原始占用者 PID 28768 持 127.0.0.1:6530（netstat LISTENING 28768）→ 启动 Pro →
+        面板 STATUS '6530 服务：未监听'，DETAIL 'MCP 端点未在监听。最近错误：HttpListenerException:
+        另一个程序正在使用此文件，进程无法访问。'（可读中文 + LastError 摘要），RetryListenButton
+        可见（N='重试监听'）；释放占用者 → 6530 FREE → 点「重试监听」→ STATUS '6530 服务：正常'、DETAIL 端口
+        6530、netstat 6530 LISTENING、curl / →
+        v1.1.0、preflight._port_listening(6530)=True 且 probe_all pro_addin
+        listening:true。证据 a7r4-status-error.txt / a7r4-buttons.txt /
+        a7r4-netstat-occupied.txt / a7r4-retry.txt / a7r4-netstat-listening.txt
+        / a7r4-preflight.txt / a7r4-error_small.jpg。"
+      truncated: false
+  - id: A8
+    source: brief.md
+    text: A8 一键取 AOI 与最近结果（需 Pro 会话）：面板点 pro_get_view_aoi 后最近结果区显示成功 + bbox 摘要，坐标与
+      HTTP 接口同参数返回一致（双证据交叉）；「复制 GeoJSON」后剪贴板内容为可被 python json 解析的合法 GeoJSON
+      Polygon。
+    result: passed
+    reason:
+      text: 活会话同一视图兴趣区一对：面板点 pro_get_view_aoi → RESULT '[21:19:38] bbox=[116.2986,
+        39.9601, 116.3812, 40.0083] · ring 顶点数 5'；紧接着 HTTP tools/call
+        pro_get_view_aoi 返回 x[116.298551..116.381212]
+        y[39.960129..40.008311]（同参数、同 extent，4 位小数完全一致）；点「复制 GeoJSON」→ 剪贴板文本可被
+        json 解析、type=Polygon、rings=1、verts=5、首尾点闭合、bbox 与上一致。证据
+        a8r4-panel-aoi.txt / a8r4-http-aoi2.txt / a8r4-panel-copy.txt /
+        a8r4-clipboard-check.txt / a8r4-clipboard.json。
+      truncated: false
+  - id: A9
+    source: brief.md
+    text: A9 add_layer / export_view 入口可用（需 Pro 会话）：面板走 pro_add_layer 加本地
+      .tif/.gpkg——结果区显示图层名/计数、TOC 出现该图层（截图）；面板走 pro_export_view 导出视图
+      PNG——结果区显示输出路径 + exported 标志、文件真实落盘（磁盘 stat）；走默认路径时落 data/deliver/
+      惯例；两工具连做 Pro UI 不冻结（UI 线程 await 纪律）。
+    result: passed
+    reason:
+      text: 活会话：面板 pro_add_layer sample2.gpkg → '图层 main.pts · 当前图层数 2 ·
+        added=True'；sample10.tif → '图层 sample10.tif · 当前图层数 3 · added=True'；TOC
+        UIA 实读含 mappingTOCItem_FeatureLayer_main.pts 与
+        mappingTOCItem_RasterLayer_sample10.tif（截图 a9r4-toc_small.jpg
+        800x450）；面板 pro_export_view（ExportPathBox 留空=默认）→ 'PNG
+        已导出：...\repo\data\deliver\pro_view.20261008_212144.png ·
+        exported=True'，磁盘 stat 1302927 B、mtime 21:21、magic 89 50 4E 47（真实 PNG
+        落盘，默认落 data/deliver/）；两工具连做后 UI 仍响应后续 UIA 读取（无冻结）。证据
+        a9r4-addlayer-gpkg.txt / a9r4-addlayer-tif.txt / a9r4-toc.txt /
+        a9r4-export.txt。
+      truncated: false
+  - id: A10
+    source: brief.md
+    text: A10 改动面与文档差异清单（离线收尾核查）：`git diff main` 路径白名单 =
+      `Pro/**`、`scripts/package_pro_addin.py`（仅确需时）、`tests/unit/test_pro_addin.py`、`docs/comet/changes/c11-dockpane/**`、Runtime
+      托管的 .gitignore 段位置调整；`gis/**`、`geocode.json`、PROCESSING_VERSION 零 diff
+      逐字核实；docs/README.md 待执行差异清单四列齐备（现状/改为/依据/回退，覆盖
+      §9.1/§9.2/§9.4/§line375/§8.6 五处）且在归档产物中。
+    result: passed
+    reason:
+      text: git diff main 路径全部在白名单：.gitignore（Comet 段纯位置迁移，6 行内容完全一致）+
+        Pro/Config.daml、GeoCodePro.csproj、McpServerHost.cs、ProTools.cs +
+        tests/unit/test_pro_addin.py + 未跟踪新文件 Pro/*（dockpane 5 件）与
+        docs/comet/changes/**；gis/**、geocode.json 零
+        diff；PROCESSING_VERSION=3；git status --short 无 logs/ 条目。四列清单
+        docs/comet/changes/c11-dockpane/local-changes.md：8 个「现状」引用块与主工作区
+        D:\DEV\geocode\docs\README.md 的 L375/L379/L396/L398/L433/L437/L542/L554
+        逐字节比较 8/8 MATCH（无省略号；3 处 '…' 均在 回退/标题/配方，非现状值与 现状 单元格）；覆盖
+        §9.1/§9.2/§9.4/line375/§8.6 五处，现状/改为/依据/回退四列齐备；文件位于随 change 归档的
+        docs/comet/changes/ 内。证据 a10r4_compare.py / a6r4-probe-all.json。
+      truncated: false
+builder_handoff:
+  candidate_id: 9177739d-5877-44c5-8bdf-51a7d7bf6515
+  identity_provider: skill-coordinated
+  builder_execution_ref: skill-coordinated:builder:22f323e0-9593-440a-b3e1-20d65d6b51cc
+  iteration: 4
+  summary:
+    text: "C11 iteration 4（全量修复轮，用户裁决「全量修复」）：iteration 3 的 6 条风险逐条闭合，全部落在本 change
+      白名单内（Pro/**、tests/unit/test_pro_addin.py、docs/comet/changes/c11-dockpane/\
+      **），gis/**、geocode.json、scripts/ 仍零 diff，PROCESSING_VERSION 保持 3。①风险1（A10
+      清单「现状」用省略号）→ docs/comet/changes/c11-dockpane/local-changes.md
+      全部「现状」改为逐字全文（引用块 + 主工作区 README 行号
+      L375/L379/L396/L398/L433/L437/L542/L554），并以脚本自检 8 处引用块与 README
+      对应行逐字节一致（MATCH x8）；②风险5（面板按钮不增 HTTP 计数）→
+      计数语义补全：McpServerHost.Requests/Errors 仍只数 HTTP 请求（含义不变，A6 的 curl
+      交叉核对继续用它），新增 ResultRegistry.ToolCalls（HTTP 与面板两路径合计，累加点在 Record ——
+      两路径唯一汇合处），面板状态文本改为「监听端口 {port}（GEOCODE_PRO_PORT 可覆盖）。HTTP 请求 {n} 次（失败 {m}
+      次）；工具执行 {k} 次（HTTP + 面板）。」，使「计数随工具执行增长」对两条路径均成立；③风险3（DebugType=none
+      去符号的语义未评估）→ csproj 按配置拆分：Release 用 DebugType=none + DebugSymbols=false
+      保交付可复现，非 Release 用 portable 符号供本地调试；实测 Release 多路重建逐字节一致（工作区 +
+      两个不同路径长度/其一有 .git 的副本 + zip 内 DLL 全等于
+      f750e6245e64b3be084dff3d992a9ee12b6673fa80c3230ba1365288ecf2ce42），Debug
+      配置照常产出 GeoCodePro.pdb；④风险4（Alt+Q 搜索列表时序敏感）→ 固化取证流程并写入 §8.6
+      #29（同一查询重试一次再判定、转录标明第几次），并区分「caption
+      索引正确」与「结果面板渲染竞态」；⑤风险2（gis/preflight.py::_port_listening 判别力）→ 受 spec 第 11
+      行「gis/ 零 diff」红线约束，C11 不改代码：写入 §8.6 #30（已知局限）+ 占用态判定固化为 netstat
+      -ano，代码级端点探测另立 change C12（改 gis/** 属需求变化，走 C12 自己的 Shape，不改变 C11
+      已确认范围）；⑥风险6（跨路径复现独立覆盖率）→ 无需实现改动，配方与参考值写入清单 §七，覆盖率由下轮 Verifier 自定。回归：离线 233
+      用例全绿（232 + 1 新增计数语义断言；test_pro_addin 20 条）、双入口全绿；package_pro_addin.py all
+      重建/打包/部署零错误，zip = 部署件 =
+      55f600b7a39a8639ff7f1a44ad09a13e2ecb6932e1c05dc7bbd9da78d6fc6fa3，zip 内 DLL
+      = f750e624…（与多路重建一致）；XAML 仍编为 BAML 进程序集。"
+    truncated: false
+  addressed_acceptance_ids:
+    - A1
+    - A2
+    - A3
+    - A4
+    - A5
+    - A6
+    - A7
+    - A8
+    - A9
+    - A10
+  acceptance_review:
+    - id: A1
+      status: implemented-with-evidence
+      evidence:
+        - geo env：-m unittest discover -s tests/unit → Ran 233 tests,
+          OK（iteration 3 为 232，本轮 +1）
+        - geo env：-m unittest tests.unit.test_spec_basics → Ran 20 tests, OK
+        - geo env：-m unittest tests.unit.test_pro_addin -v → 20 条 ...
+          ok（iteration 3 为 19）
+        - gis/spec.py:45 PROCESSING_VERSION = 3（未改）；金指纹用例在 233 批次内全绿
+      note: 口径精确化（承 iteration 3）：装饰器集合未变（skipUnless 覆盖 4 个测试），zip 已构建时全部放行、运行期
+        skip=0；A1 判据不受影响。
+    - id: A2
+      status: implemented-with-evidence
+      evidence:
+        - Pro/Config.daml：<dockPanes> 内恰 1 个 <dockPane id=GeoCodePro_Dockpane
+          className=GeoCodePro.GeoCodeDockpaneViewModel dock=group
+          dockWith=esri_core_projectDockPane width=360>，<content
+          className=GeoCodePro.GeoCodeDockpaneView>，无 condition；controls 内不含
+          dockPane
+        - 开面板按钮 GeoCodePro_ShowDockpane
+          className=GeoCodePro.ShowDockpaneButton、caption='GeoCode
+          状态面板'；GeoCodePro_ServerStatus 与 tabs/groups 零挪动
+        - DockpaneDamlTest 6 条在 233 批次内全绿（含 caption 含 GeoCode 断言、zip 内 DAML
+          与源码一致断言）
+      note: 本轮未改 DAML。
+    - id: A3
+      status: implemented-with-evidence
+      evidence:
+        - "Pro/GeoCodePro.csproj：<Deterministic>true</Deterministic>、<IncludeSo\
+          urceRevisionInInformationalVersion>false</IncludeSourceRevisionInInfo\
+          rmationalVersion>、<PathMap>$(MSBuildProjectDirectory)=/_/geocodepro</\
+          PathMap>，并按配置拆分符号——Release: <DebugType Condition=\"'$(Configuration)'
+          == 'Release'\">none</DebugType> + <DebugSymbols
+          ...>false</DebugSymbols>；非 Release: portable + true"
+        - Release 多路重建逐字节一致：工作区 Pro/、%TEMP% 下两个不同路径长度的副本（其一 git init+提交）、zip 内
+          Install/GeoCodePro.dll —— 全部 sha256 =
+          f750e6245e64b3be084dff3d992a9ee12b6673fa80c3230ba1365288ecf2ce42
+        - Debug 配置仍产出符号：bin/Debug/net10.0-windows/ 下 GeoCodePro.dll +
+          GeoCodePro.pdb（23576 B）
+        - package_pro_addin.py all → [build] dotnet build -c Release
+          成功；[package] zip 产出（Config.daml + Install/GeoCodePro.dll）；[deploy]
+          .esriAddInX 部署完成
+        - 部署件 sha256 == 候选 zip sha256（55f600b7…）；zip 内 DLL sha256 == f750e624…（=
+          多路重建值）
+        - XAML 仍编译入程序集：ResourceReader 读 GeoCodePro.g.resources → 键
+          geocodedockpaneview.baml
+      note: 风险 3 关闭：交付件（Release）跨路径可复现，本地调试（Debug）符号保留，两者不再互斥；zip 仍只装 Config.daml +
+        Install/*.dll。
+    - id: A4
+      status: implemented-with-evidence
+      evidence:
+        - git diff main --name-only -- gis/ → 0 行；-- geocode.json → 0 行；--
+          scripts/ → 0 行
+        - gis/spec.py:45 PROCESSING_VERSION = 3（逐字未改）
+        - 既有 test_pro_addin preflight/端口覆盖/zip 布局/DAML 基础用例（含 6 条 preflight）在
+          233 批次内全绿
+      note: 本轮改动仅
+        Pro/（ResultRegistry.cs、GeoCodeDockpaneViewModel.cs、GeoCodePro.csproj）、tests/unit/test_pro_addin.py
+        与 change 目录内文档。
+    - id: A5
+      status: implemented-with-evidence
+      evidence:
+        - iteration 3 独立验收在 Pro 活会话实测通过：Alt+Q 搜 'GeoCode' 的 flyout 含 MenuItem
+          N='GeoCode 状态面板' Aid=GeoCodePro_ShowDockpane；InvokePattern 激活后面板
+          present（a5r3-*）
+        - 回归防线：test_show_dockpane_button_caption_carries_geocode 断言 zip 内 DAML
+          该按钮 caption 含 'GeoCode'（绿）
+      note: "本轮未改 DAML 与按钮行为。风险 4（搜索列表时序敏感）已固化为取证流程并写入 §8.6
+        #29：同一查询重试一次再判定、转录标明第几次——下轮 Verifier 可据此抗竞态取证。"
+    - id: A6
+      status: implemented-with-evidence
+      evidence:
+        - A6(a) 自动刷新（iteration 2/3 已实测）：零 UI 交互下 HTTP 调用使计数增长（iteration 3：2 →
+          7，≤2s）；实现为 Pro/GeoCodeDockpaneView.xaml.cs 的
+          DispatcherTimer（1s，Loaded/IsVisibleChanged 起表、Unloaded/不可见停表），Tick 只读
+          McpServerHost 静态属性
+        - A6(b) 端口（iteration 2/3 已实测）：默认 6530 与 GEOCODE_PRO_PORT=6531
+          覆写两条路径都测过，面板分别显示 '6530 服务：正常' / '6531 服务：正常' 与对应端口，curl 指向该端口返回
+          v1.1.0；实现为 GetStatusSnapshot 取 host.Port，文件内无 6530 字面量
+        - 本轮补全计数语义（风险 5）：新增 ResultRegistry.ToolCalls（累加点在 Record —— HTTP
+          与面板两路径唯一汇合处），面板文本改为 '监听端口 {port}（GEOCODE_PRO_PORT 可覆盖）。HTTP 请求 {n}
+          次（失败 {m} 次）；工具执行 {k} 次（HTTP + 面板）。'；McpServerHost.Requests/Errors 保持只数
+          HTTP 请求
+        - 回归防线：DockpaneStatusSourceTest 4 条（host.Port 且无 6530
+          字面量／DispatcherTimer 起停与可见性／ResultRegistry.ToolCalls + 'HTTP 请求' +
+          '工具执行' + Interlocked.Increment）在 233 批次内全绿
+      note: 于是验收文字「计数随工具执行增长」对 HTTP 与面板两条执行路径都成立（此前仅 HTTP 路径成立）。
+    - id: A7
+      status: implemented-with-evidence
+      evidence:
+        - iteration 3 独立验收实测通过：自有 occupier PID 25216 占 127.0.0.1:6530 → 面板 '6530
+          服务：未监听' + DetailText 含 HttpListenerException + RetryListenButton
+          可见；释放后点「重试监听」→ '6530 服务：正常' + curl v1.1.0 + netstat LISTENING（a7r3-*）
+        - 实现未改：RetryListen() 仍为 Stop→Start + 异常兜底记
+          LastError；未监听态渲染与重试按钮可见性逻辑不变，仅状态/详情文本按 host.Port 与双计数格式化
+      note: "风险 2：gis/preflight.py::_port_listening 判别力受 spec 第 11 行 gis/ 零 diff
+        红线约束，C11 内不改代码（改它会直接判 A10 不通过）；已写入 §8.6 #30 并把占用态判定固化为 netstat
+        -ano；端点级探测代码改进另立 change C12（需改 gis/**，属需求变化）。"
+    - id: A8
+      status: implemented-with-evidence
+      evidence:
+        - iteration 3 独立验收实测通过：面板 AoiButton → bbox 与 HTTP tools/call
+          pro_get_view_aoi{} 返回在展示精度一致（x[116.3376..116.3671]
+          y[39.9773..40.0118]，ring 5 顶点）；CopyGeoButton → 剪贴板经 json.loads 解析为合法
+          GeoJSON Polygon、1 ring、5 顶点、首尾闭合（a8r3-*）
+        - 本轮未改 pro_get_view_aoi 路径与按钮事件处理
+      note: 证据沿用 iteration 3（同一实现面；本轮改动只影响状态文本与计数、构建属性）。
+    - id: A9
+      status: implemented-with-evidence
+      evidence:
+        - iteration 3 独立验收实测通过：pro_add_layer 加 gpkg → 'main.pts · 当前图层数 2 ·
+          added=True'；加 tif → '图层数 3 · added=True'；TOC 出现对应
+          mappingTOCItem；pro_export_view 默认路径 → PNG 真实落盘（磁盘 stat）；连续工具调用后 UIA
+          读取正常（UI 未冻结）（a9r3-*）
+        - 本轮未改 add_layer / export_view 事件与 ProTools.CallAsync 路径
+      note: 证据沿用 iteration 3（同一实现面）。注：面板按钮执行工具现在也会让面板上的「工具执行」计数增长（本轮新增语义），可在下轮复验时一并取证。
+    - id: A10
+      status: implemented-with-evidence
+      evidence:
+        - git diff main --name-only → .gitignore, Pro/Config.daml,
+          Pro/GeoCodePro.csproj, Pro/McpServerHost.cs, Pro/ProTools.cs,
+          tests/unit/test_pro_addin.py；未跟踪新增 Pro/*.xaml|cs 共 5 个 +
+          docs/comet/changes/c11-dockpane/**（含 local-changes.md）——全部落在 A10 白名单内
+        - git diff main --name-only -- gis/ → 0；-- geocode.json → 0；-- scripts/
+          → 0；gis/spec.py:45 PROCESSING_VERSION = 3
+        - .gitignore diff 仅为 Runtime 托管的 Comet 段位置调整（内容逐行不变）
+        - "四列（现状/改为/依据/回退）清单位于
+          docs/comet/changes/c11-dockpane/local-changes.md（git 跟踪、A10 白名单内，随
+          change 归档进 docs/comet/archive/**）；覆盖 §9.1（line375 行 + 台账追加行）、§9.2（C11
+          行 + 执行顺序行）、§9.4（标题 + dockpane 段）、§8.6（标题 + #29–#32 追加）五处，共 8 条差异 +
+          一节「不动的部分」+ 风险处置记录 + 复核配方"
+        - 风险 1 已修：8 处「现状」改为逐字全文（引用块 + 行号），并由脚本自检与主工作区 docs/README.md 的
+          L375/L379/L396/L398/L433/L437/L542/L554 逐字节比较——8/8 MATCH（含全长
+          447/440/397 字符的两行）；不再出现省略号
+        - git status --short 中无 logs/ 条目（旧 logs 副本已删除，唯一事实源在 change 目录）
+      note: 清单是「待执行差异」而非已改 README：按 D9，docs/README.md（gitignored
+        本地文档）由归档轮在主工作区就地执行，每条含回退动作、可逆。
+  checks:
+    - name:
+        text: offline-unit-discover
+        truncated: false
+      result: passed
+      note:
+        text: geo env：discover -s tests/unit → Ran 233 tests, OK（iteration 3 为 232，+1
+          计数语义断言）
+        truncated: false
+    - name:
+        text: offline-unit-dotted-path
+        truncated: false
+      result: passed
+      note:
+        text: geo env：-m unittest tests.unit.test_spec_basics → Ran 20 tests, OK
+        truncated: false
+    - name:
+        text: cross-path-reproducible-release-build
+        truncated: false
+      result: passed
+      note:
+        text: Release：工作区 + 两个不同路径长度副本（其一有 .git）+ zip 内 DLL → 同一 sha256
+          f750e624…；Debug：仍产出 GeoCodePro.pdb
+        truncated: false
+    - name:
+        text: build-package-deploy
+        truncated: false
+      result: passed
+      note:
+        text: package_pro_addin.py all：build 成功 / zip 产出 / 部署 .esriAddInX；zip = 部署件 =
+          55f600b7…，zip 内 DLL = f750e624…
+        truncated: false
+    - name:
+        text: verbatim-quote-selfcheck
+        truncated: false
+      result: passed
+      note:
+        text: 脚本比对清单 8 处「现状」引用块 vs 主工作区 README 对应行 → 8/8 逐字节 MATCH
+        truncated: false
+    - name:
+        text: whitelist-and-zero-diff
+        truncated: false
+      result: passed
+      note:
+        text: git diff main 仅白名单内 6 个跟踪文件 + 5 个新增 Pro 文件 + change
+          目录；gis/、geocode.json、scripts/ 零 diff；PV=3
+        truncated: false
+    - name:
+        text: pro-session-a5-a9
+        truncated: false
+      result: not-run
+      note:
+        text: "A5–A9 的活体 Pro 会话取证由 Verify 阶段的独立 Verifier 执行（#28 UIA 纪律；建议 A6 覆盖默认 6530
+          与覆写端口两条路径，并按 #29 对 Alt+Q 查询重试一次再判定）"
+        truncated: false
+  checks_truncated: false
+  known_limits:
+    - text: A5–A9 五项验收需 Pro 3.7 活会话 UIA 取证，由 Verify 阶段执行；package_pro_addin.py all
+        已把本候选（zip=部署件=55f600b7…）部署为 .esriAddInX，Pro 需以新进程加载。
+      truncated: false
+    - text: 测试必须在 conda env geo 下运行：系统 Python312 缺 pyproj，discover 会 40
+        error（环境差异，非回归）。
+      truncated: false
+    - text: 面板 VM 契约依赖 Esri 框架运行时行为（DataContext 绑定 / DockPaneManager.Find
+        按需创建单例），静态测试只能覆盖 DAML 结构、源码字段、计时器与构建属性，不能覆盖实际刷新时序与停靠行为。
+      truncated: false
+    - text: "gis/preflight.py::_port_listening 是 TCP-connect 探针，在任意原始监听者占用端口时也报 true；受
+        spec 第 11 行「gis/ 零 diff」约束 C11 不改，记录为 §8.6 #30，占用态判定改用 netstat
+        -ano；端点级探测的代码改进另立 change C12（改 gis/** 属需求变化，须走 C12 自身的 Shape 确认）。"
+      truncated: false
+    - text: "Alt+Q 命令搜索的结果面板存在渲染竞态（首次可能只显示「最近/建议」分组）：caption 索引本身正确（两轮独立验收均已命中），取证按
+        §8.6 #29 重试一次再判定。"
+      truncated: false
+    - text: 面板「工具执行」计数（ResultRegistry.ToolCalls）含 __panel_retry_listen__
+        这类面板内部登记项；「HTTP 请求」计数（McpServerHost.Requests）含义不变，两者分列展示、互不冒充。
+      truncated: false
+    - text: DebugType 仅在 Release 关符号；Debug/其他配置产出 portable 符号，故带符号构建不保证跨路径逐字节一致（交付件为
+        Release，不受影响）。
+      truncated: false
+  known_limits_truncated: false
+  review: null
+  submitted_at: 2026-10-08T13:05:39.924Z
+blockers: []
+verification:
+  candidate_id: 9177739d-5877-44c5-8bdf-51a7d7bf6515
+  identity_provider: skill-coordinated
+  verifier_execution_ref: skill-coordinated:verifier:ef8c6470-d710-480a-b3cc-75755261f622
+  iteration: 4
+  attempt: 1
+  assurance: skill-coordinated
+  verdict: pass
+  checks:
+    - id: unit-discover
+      name:
+        text: unit-discover
+        truncated: false
+      argv_display:
+        - text: -m
+          truncated: false
+        - text: unittest
+          truncated: false
+        - text: discover
+          truncated: false
+        - text: -s
+          truncated: false
+        - text: tests/unit
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 12065
+    - id: unit-dotted-path
+      name:
+        text: unit-dotted-path
+        truncated: false
+      argv_display:
+        - text: -m
+          truncated: false
+        - text: unittest
+          truncated: false
+        - text: tests.unit.test_spec_basics
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 237
+    - id: offline-build-deploy
+      name:
+        text: offline-build-deploy
+        truncated: false
+      argv_display:
+        - text: scripts/package_pro_addin.py
+          truncated: false
+        - text: all
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 1854
+  summary:
+    text: iteration 4（全量修复轮）独立只读复验通过：10/10（A1–A10 全 passed）。离线侧：233 用例（≥223）+ dotted
+      20 全绿、PV3 金指纹不回退；跨路径 Release 重建逐字节一致（f750e624...）并与
+      zip/部署件字节绑定（zip=部署件=55f600b7...），Debug 仍产 PDB、XAML→BAML
+      键保留；gis/**、geocode.json、scripts/ 零 diff，PROCESSING_VERSION=3；A10 清单 8
+      处「现状」与主工作区 README 对应行逐字节 8/8 MATCH、无省略号、四列齐备且覆盖五处。活会话（Pro 3.7，加载沙箱
+      aprx，AssemblyCache DLL=本候选）：A5 Alt+Q 搜 'GeoCode' 重试后命中 'GeoCode
+      状态面板'(GeoCodePro_ShowDockpane) 并激活为右侧停靠面板；A6 两条执行路径计数语义在默认 6530 与覆写 6531
+      上均成立（面板按钮：工具执行 +1、HTTP 不变；HTTP：请求 +1 且工具执行 +1；零 UI 交互 965ms 自动刷新）；A7
+      占用→未监听+LastError→释放→重试监听→netstat/curl/preflight 全恢复；A8 面板 bbox 与 HTTP 同
+      extent 4dp 一致 + 剪贴板合法 GeoJSON Polygon；A9 tif/gpkg 入 TOC、默认 data/deliver 下
+      PNG 真实落盘（1302927 B，PNG magic）。只读纪律：worktree 零写入，git status --short
+      与本轮开始逐字一致。
+    truncated: false
+  risks:
+    - text: "踩坑 #29 复现：Alt+Q 命令搜索列表时序敏感——第 1 次查询只返回 9 项「最近/建议」无目标项，重试（session1 第 2
+        次、session2 第 3 次）才出现；caption 索引本身正确（'GeoCode 状态面板' 命中
+        Aid=GeoCodePro_ShowDockpane），纯取证竞态，非产品缺陷。"
+      truncated: false
+    - text: gis/preflight.py::_port_listening 判别力（#30）：该探针是 TCP connect，原始占用者占 6530
+        时同样返回 true，不能单独证明是本 add-in 端点；C11 受 spec 第 11 行 gis/ 零 diff
+        红线约束不修，端点级探测另立 C12——A7 已改用 netstat -ano + 面板 LastError 判定。
+      truncated: false
+    - text: docs/comet/changes/c11-dockpane/local-changes.md 在 worktree 中当前为未跟踪（??
+        条目），符合 Comet 归档前状态（change 目录随归档入库）；非缺陷，仅记录状态。
+      truncated: false
+    - text: A1 文案「skip 集 = 既有 4 条」与实际 runtime skips=0 的口径差异沿袭前几轮：4 条指 zip 存在时被
+        skipUnless 门控而实际执行的用例集合（PackageStructure 3 + DamlValidity 1），集合本轮未变。
+      truncated: false
+    - text: 本次独立 Verifier 运行在 session 0，Pro/UIA 需经计划任务（LogonType Interactive）在交互
+        session 1 驱动；Pro 与 add-in 均在 session 1 实测，AssemblyCache 内被加载的
+        GeoCodePro.dll sha256=f750e624... 与本候选 Release DLL 一致（活体绑定已核实）。
+      truncated: false
+  risks_truncated: false
+  completed_at: 2026-10-08T13:29:36.309Z
+history:
+  - goal_cycle: 1
+    iteration: 1
+    attempt: 1
+    outcome: execution-error
+    unresolved_ids: []
+    summary:
+      text: 任务丢失：已派发的 Verifier 未回报启动回执（verifierStartup.confirmation=unconfirmed，注册于
+        2026-10-08T04:14:39.809Z），宿主会话在 2026-10-08T05:02:10Z 终止，托管该 Verifier 的外部
+        delegate 进程随父进程一并结束。核实现场：①平台侧无该任务（subagent status 查无、async-subagent-runs
+        为空）；②承载 Verifier 的临时会话 del_muz2ivu7_kdkl（acp-delegate）最后活动
+        2026-10-08T05:02:23Z，其 .out 为 0 字节、未产出任何结果，final-result.json 仍为全 blocked
+        骨架；③同一候选此前另两次 delegate 尝试（12:18-12:44 / 12:52-12:57
+        本地）同样在父进程终止时结束。已产出证据（A1/A2/A3/A4/A10 离线判定材料、A5/A7 部分 UIA 转录与截图、候选 sha256
+        与部署件比对）保留在 %TEMP%\c11-verifier\，未提交为验收结论。候选实现与已完成的 Runtime
+        检查均保留不变，本次仅为重新派发独立 Verifier；执行方式变化：改用平台原生 subagent 能力承载，不再依赖宿主的
+        acp-delegate 子进程。
+      truncated: false
+    completed_at: 2026-10-08T09:11:10.510Z
+  - goal_cycle: 1
+    iteration: 1
+    attempt: 2
+    outcome: fail
+    unresolved_ids:
+      - A5
+      - A6
+    summary:
+      text: "Independent offline+Pro-session verification of candidate ed328aba.
+        Offline: A1 (228/20 OK, PV=3, fingerprint green), A2 (DAML structure),
+        A3 (isolated-copy build exit0 + BAML 'geocodedockpaneview.baml' in dll),
+        A4 (preflight/package zero diff, deploy invariants), A10 (whitelist +
+        gis/geocode.json zero diff; worktree end-state identical to initial) all
+        pass. Pro session (deployed addInX sha == candidate zip 32fe6ba0): A7
+        (own occupier -> readable 未监听+LastError, release -> 重试监听 -> 6530 rebinds
+        + preflight listening), A8 (panel AOI == HTTP coords; clipboard valid
+        GeoJSON Polygon), A9 (tif/gpkg add_layer -> result+TOC; export_view
+        default path PNG on disk; UI responsive) pass. A5 fails the letter:
+        panel is visible/docked and the command-search entry activates, but the
+        required query 'GeoCode' does not surface it (only 'Status Panel' does).
+        A6 fails: no auto-refresh timer (4 curls + 12s left the displayed count
+        at 0) and the port is a hardcoded 6530 literal (override not shown).
+        Overall verdict fail; worktree left byte-identical to the initial
+        snapshot."
+      truncated: false
+    completed_at: 2026-10-08T10:15:08.586Z
+  - goal_cycle: 1
+    iteration: 2
+    attempt: 1
+    outcome: pass
+    unresolved_ids: []
+    summary:
+      text: 迭代2 复验：候选中新 caption 'GeoCode 状态面板'、host.Port 动态端口、1s DispatcherTimer
+        自动刷新均已实测生效。A1–A10 全部通过。关键活体证据：Alt+Q 搜 GeoCode
+        命中开面板入口并激活停靠面板(A5)；面板可见期零点击计数 1→6 且 6531 覆写会话显示覆写端口(A6)；6530
+        占用→'未监听+HttpListenerException'→释放后重试监听恢复(A7)；面板 AOI bbox 与 HTTP
+        一致、剪贴板为合法 GeoJSON Polygon(A8)；面板加 gpkg 入 TOC、默认导出落 data/deliver/
+        且磁盘落盘(A9)。离线 231 用例双入口全绿、金指纹 PV3 不回退、gis/**+geocode.json 零
+        diff(A1/A4/A10)。git status 与开始时一致，未在 worktree 写入。
+      truncated: false
+    completed_at: 2026-10-08T11:20:48.773Z
+  - goal_cycle: 1
+    iteration: 2
+    attempt: 1
+    outcome: recovery
+    unresolved_ids: []
+    summary:
+      text: 用户裁决：先修复风险再接受结果。按独立验收的 5 条风险分处置——(1) A3 跨路径重建可复现性未印证：本轮回 Build，csproj
+        增加确定化构建（Deterministic + PathMap 归一化源码/输出路径），并以「换路径双次重建 sha256 一致」自证；(2)
+        A10 清单载体为 gitignored logs/acceptance/、不在 git 归档面：迁移到 A10 白名单内的 git 跟踪路径
+        docs/comet/changes/c11-dockpane/local-changes.md，随归档成为归档产物；(3) A1 skip
+        口径精确化（zip 已构建时 skipUnless 全部执行、运行期 skip=0，4 条为装饰器计数），不改判据；(5) A6(b) 默认
+        6530 路径列入下轮复验项；(4) A7 preflight._port_listening 判别力受 spec 第 11 行 gis/ 零
+        diff 红线约束，本 change 不改代码，仅记录已知局限与处置流程（占用态判定用 netstat -ano），代码改进另立
+        change。确认需求范围不变，只改实现。
+      truncated: false
+    completed_at: 2026-10-08T11:26:41.396Z
+  - goal_cycle: 1
+    iteration: 3
+    attempt: 1
+    outcome: pass
+    unresolved_ids: []
+    summary:
+      text: Independent iteration-3 verification of candidate 77c76d1d on the rebuilt
+        artifact (deployed sha == zip sha aaaf1d3b…). A1–A4,A10 offline
+        re-run/re-derived; A3 cross-path rebuild reproduced sha 0a9a9e55… from
+        two different temp paths and BAML presence re-confirmed after
+        DebugType=none; A5–A9 fresh live Pro 3.7 sessions (default 6530,
+        occupied-then-retry, GEOCODE_PRO_PORT=6531) all pass. No worktree
+        writes; git status identical to start.
+      truncated: false
+    completed_at: 2026-10-08T12:59:46.386Z
+  - goal_cycle: 1
+    iteration: 3
+    attempt: 1
+    outcome: recovery
+    unresolved_ids: []
+    summary:
+      text: "用户裁决：全量修复（不做信息级遗留）。按 iteration 3 独立验收的 6 条风险逐条闭合，全部落在本 change 白名单内（Pro/**
+        + tests/ + change 目录），不动 gis/**：①local-changes.md 的「现状」单元格去掉省略号、改为主工作区
+        README 逐字全文（line375/§9.1 末行/§9.2 C10 行/执行顺序行/§9.4 标题与 dockpane 段/§8.6
+        标题与 #28 行）；②A6 计数语义：面板按钮执行工具不增 HTTP 计数的口径缺口——在
+        ResultRegistry.Record（两路径唯一汇合点）加工具执行计数器并让面板状态文本同时显式展示「HTTP 请求 n 次（失败 m）/
+        工具执行 k 次」，使「计数随工具执行增长」对两条路径都成立；③可复现性与符号共存：csproj 拆配置——Release 保持
+        DebugType=none（交付件跨路径逐字节可复现），非 Release 用 portable 符号供本地调试；④Alt+Q
+        命令搜索列表时序敏感（首次可能只显示最近/建议区块）——写入踩坑 #29 结论并固化「重试一次再判定」的取证流程；⑤A7
+        preflight._port_listening 判别力：C11 受 spec 第 11 行 gis/ 零 diff 红线约束，代码改进另立
+        change C12（不改 C11 需求范围），C11 内把占用态判定固化为 netstat -ano 并记为
+        #30；⑥跨路径复现的独立覆盖率注记：由下轮 Verifier 自行决定重跑路数，无需实现改动。确认需求范围不变，只改实现与文档载体。"
+      truncated: false
+    completed_at: 2026-10-08T13:02:16.354Z
+  - goal_cycle: 1
+    iteration: 4
+    attempt: 1
+    outcome: pass
+    unresolved_ids: []
+    summary:
+      text: iteration 4（全量修复轮）独立只读复验通过：10/10（A1–A10 全 passed）。离线侧：233 用例（≥223）+ dotted
+        20 全绿、PV3 金指纹不回退；跨路径 Release 重建逐字节一致（f750e624...）并与
+        zip/部署件字节绑定（zip=部署件=55f600b7...），Debug 仍产 PDB、XAML→BAML
+        键保留；gis/**、geocode.json、scripts/ 零 diff，PROCESSING_VERSION=3；A10 清单 8
+        处「现状」与主工作区 README 对应行逐字节 8/8 MATCH、无省略号、四列齐备且覆盖五处。活会话（Pro 3.7，加载沙箱
+        aprx，AssemblyCache DLL=本候选）：A5 Alt+Q 搜 'GeoCode' 重试后命中 'GeoCode
+        状态面板'(GeoCodePro_ShowDockpane) 并激活为右侧停靠面板；A6 两条执行路径计数语义在默认 6530 与覆写 6531
+        上均成立（面板按钮：工具执行 +1、HTTP 不变；HTTP：请求 +1 且工具执行 +1；零 UI 交互 965ms 自动刷新）；A7
+        占用→未监听+LastError→释放→重试监听→netstat/curl/preflight 全恢复；A8 面板 bbox 与 HTTP 同
+        extent 4dp 一致 + 剪贴板合法 GeoJSON Polygon；A9 tif/gpkg 入 TOC、默认 data/deliver
+        下 PNG 真实落盘（1302927 B，PNG magic）。只读纪律：worktree 零写入，git status --short
+        与本轮开始逐字一致。
+      truncated: false
+    completed_at: 2026-10-08T13:29:36.309Z
+history_overflow:
+  dropped_entries: 0
+  first_dropped_at: null
+  last_dropped_at: null
+  outcome_counts:
+    pass: 0
+    fail: 0
+    blocked: 0
+    execution-error: 0
+    recovery: 0
+verification_result: pass
+verification_report: verification.md
+archived: true
+created_at: 2026-10-08T03:07:54.700Z
