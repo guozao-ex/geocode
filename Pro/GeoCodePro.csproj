@@ -10,19 +10,31 @@
     <!-- Esri 打包 target 用 CodeTaskFactory 会失败（§9.4 已核实）：不用它，打包走 scripts/package_pro_addin.py -->
     <EnableEsriPackaging>false</EnableEsriPackaging>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
-    <Version>1.0.0</Version>
+    <Version>1.1.0</Version>
+    <!-- 构建确定化（A3 可复现性）：同一源码在不同路径重建应产出逐字节相同的 DLL。
+         ① Deterministic：编译器输出确定化；
+         ② IncludeSourceRevisionInInformationalVersion=false：不在 InformationalVersion 里嵌入 git 提交号，
+            使「有 .git 的工作区」与「无 .git 的临时副本」也能得到同一产物；
+         ③ PathMap：把项目目录归一到固定前缀，消掉 DLL 调试目录/PDB 路径里内嵌的绝对构建路径。 -->
+    <Deterministic>true</Deterministic>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <PathMap>$(MSBuildProjectDirectory)=/_/geocodepro</PathMap>
+    <!-- 交付物只含 DLL（zip 不装 PDB，见 scripts/package_pro_addin.py）。
+         **Release（交付）**：关掉调试符号，连带消除 PDB GUID / CodeView 调试目录这两个与构建位置
+         相关的哈希派生字段，使「任意路径重建 → 逐字节相同」成立（可自证：换路径双次重建 sha256 一致）。
+         **其他配置（本地调试）**：保留 portable 符号，Debug 构建照常可调——交付可复现性与开发符号不冲突。 -->
+    <DebugType Condition="'$(Configuration)' == 'Release'">none</DebugType>
+    <DebugSymbols Condition="'$(Configuration)' == 'Release'">false</DebugSymbols>
+    <DebugType Condition="'$(Configuration)' != 'Release'">portable</DebugType>
+    <DebugSymbols Condition="'$(Configuration)' != 'Release'">true</DebugSymbols>
     <!-- add-in 部署布局约定：AddInManifest 由我们自己的打包脚本生成/携带，跳过 SDK 的 esriAddIn 生成 -->
+    <!-- UseWPF：XAML（dockpane 视图）编译为 Page/BAML；WPF 程序集由该开关隐式引用 -->
+    <UseWPF>true</UseWPF>
     <ProBin>$(ProgramW6432)\ArcGIS\Pro\bin</ProBin>
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- WPF / MessageBox 依赖 -->
-    <FrameworkReference Include="Microsoft.WindowsDesktop.App.WPF" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <!-- 直接引用 Pro bin / Extensions 程序集；不用 NuGet / VSIX -->
-    <Reference Include="ArcGIS.Core">
+    <!-- 直接引用 Pro bin / Extensions 程序集；不用 NuGet / VSIX -->    <Reference Include="ArcGIS.Core">
       <HintPath>$(ProBin)\ArcGIS.Core.dll</HintPath>
       <Private>false</Private>
     </Reference>

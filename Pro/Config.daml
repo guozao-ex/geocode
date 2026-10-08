@@ -1,15 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- GeoCode add-in：ArcGIS Pro 3.7 活会话接入（change C9 p1b-arcgis-addin）
+<!-- GeoCode add-in：ArcGIS Pro 3.7 活会话接入（change C9 p1b-arcgis-addin；
+     C11 c11-dockpane 增补 Dockpane 状态面板）。
      部署布局：本文件置 zip 根，Install/*.dll 为程序集；zip 拷贝到
      [MyDocuments]\ArcGIS\AddIns\ArcGISPro（由 scripts/package_pro_addin.py 完成）。 -->
 <ArcGIS defaultAssembly="GeoCodePro.dll"
         defaultNamespace="GeoCodePro"
         xmlns="http://schemas.esri.com/DADF/Registry">
-  <AddInInfo id="GeoCodePro-MCP" version="1.0.0" desktopVersion="3.7">
+  <AddInInfo id="GeoCodePro-MCP" version="1.1.0" desktopVersion="3.7">
     <Name>GeoCode Pro MCP</Name>
-    <Description>GeoCode 活会话接入：HTTP MCP server（127.0.0.1:6530），pro_get_view_aoi / pro_add_layer / pro_export_view。仅个人学习使用，不分发。</Description>
+    <Description>GeoCode 活会话接入：HTTP MCP server（127.0.0.1:6530）+ 状态面板（Dockpane），pro_get_view_aoi / pro_add_layer / pro_export_view。仅个人学习使用，不分发。</Description>
     <Author>GeoCode</Author>
-    <Date>2026-10-07</Date>
+    <Date>2026-10-09</Date>
   </AddInInfo>
 
   <modules>
@@ -17,7 +18,7 @@
                   className="GeoCodePro.GeoCodeModule"
                   autoLoad="true"
                   caption="GeoCode Pro MCP">
-      <description>在 Pro 进程内起 HTTP MCP server（127.0.0.1:6530）。</description>
+      <description>在 Pro 进程内起 HTTP MCP server（127.0.0.1:6530），并提供状态面板（Dockpane）。</description>
       <tabs>
         <tab id="GeoCodePro_Tab" caption="GeoCode">
           <groupRef id="GeoCodePro_Group" />
@@ -26,6 +27,7 @@
       <groups>
         <group id="GeoCodePro_Group" caption="MCP" appearsOn="GeoCodePro_Tab">
           <button refID="GeoCodePro_ServerStatus" size="large" />
+          <button refID="GeoCodePro_ShowDockpane" size="large" />
         </group>
       </groups>
       <controls>
@@ -39,7 +41,29 @@
           <shortDescription>查看 MCP server 状态。</shortDescription>
           <longDescription>弹出 MCP server 监听状态（端口、工具数、请求数）。</longDescription>
         </button>
+        <button id="GeoCodePro_ShowDockpane"
+                caption="GeoCode 状态面板"
+                className="GeoCodePro.ShowDockpaneButton"
+                loadErrorMessage="GeoCode 状态面板按钮加载失败。"
+                message="打开状态面板"
+                tooltip="打开 GeoCode 状态面板（Dockpane）">
+          <tooltipHeading>GeoCode Panel</tooltipHeading>
+          <shortDescription>打开状态面板。</shortDescription>
+          <longDescription>打开 Dockpane 状态面板：6530 服务状态与三工具入口。</longDescription>
+        </button>
       </controls>
+      <dockPanes>
+        <!-- dockPane 声明：Per ProGuide DockPanes（className=VM:Contracts.DockPane，
+             content=UserControl 视图；condition 已弃用不用；dockWith 首显停靠目标）。 -->
+        <dockPane id="GeoCodePro_Dockpane"
+                  caption="GeoCode Status"
+                  className="GeoCodePro.GeoCodeDockpaneViewModel"
+                  dock="group"
+                  dockWith="esri_core_projectDockPane"
+                  width="360">
+          <content className="GeoCodePro.GeoCodeDockpaneView" />
+        </dockPane>
+      </dockPanes>
     </insertModule>
   </modules>
 </ArcGIS>

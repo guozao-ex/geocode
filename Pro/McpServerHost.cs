@@ -113,7 +113,7 @@ namespace GeoCodePro
                 {
                     var info = new Dictionary<string, object?> {
                         ["name"] = "geocode-pro",
-                        ["version"] = "1.0.0",
+                        ["version"] = "1.1.0",
                         ["routes"] = new[] { "/mcp" },
                         ["hint"] = $"MCP 客户端连 http://127.0.0.1:{Port}/mcp",
                     };
@@ -196,7 +196,7 @@ namespace GeoCodePro
                 return Ok(new Dictionary<string, object?> {
                     ["protocolVersion"] = Str(parms, "protocolVersion") ?? "2025-06-18",
                     ["capabilities"] = new Dictionary<string, object?> { ["tools"] = new Dictionary<string, object?> { ["listChanged"] = false } },
-                    ["serverInfo"] = new Dictionary<string, object?> { ["name"] = "geocode-pro", ["version"] = "1.0.0" },
+                    ["serverInfo"] = new Dictionary<string, object?> { ["name"] = "geocode-pro", ["version"] = "1.1.0" },
                 });
             }
             if (method == "ping") return Ok(new Dictionary<string, object?>());
@@ -210,6 +210,8 @@ namespace GeoCodePro
                 try
                 {
                     var result = ProTools.Call(name, args as Dictionary<string, object?> ?? new Dictionary<string, object?>());
+                    // C11：HTTP 路径与 Dockpane 面板共用同一结果注册表（面板是 6530 的进程内镜子）
+                    ResultRegistry.RecordHttpCall(name, result, null);
                     return Ok(new Dictionary<string, object?> {
                         ["content"] = new object[] { new Dictionary<string, object?> { ["type"] = "text", ["text"] = Json(result) } },
                         ["isError"] = false,
@@ -218,6 +220,7 @@ namespace GeoCodePro
                 catch (Exception e)
                 {
                     Interlocked.Increment(ref _errors);
+                    ResultRegistry.RecordHttpCall(name, null, e);
                     return Ok(new Dictionary<string, object?> {
                         ["content"] = new object[] { new Dictionary<string, object?> { ["type"] = "text", ["text"] = $"{e.GetType().Name}: {e.Message}" } },
                         ["isError"] = true,
