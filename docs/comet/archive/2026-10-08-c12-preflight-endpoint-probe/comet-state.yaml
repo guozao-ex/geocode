@@ -1,0 +1,603 @@
+schema: comet.native.v4
+name: c12-preflight-endpoint-probe
+language: zh-CN
+phase: archive
+status: done
+state_version: 8
+brief: brief.md
+document_constraints_version: 2
+shape_confirmation_hash: cdbfc9a968c4bbc003655772605de6b06b86e23b7ae128e270c33c36efdc3a0e
+spec_changes:
+  - capability: c12-preflight-endpoint-probe
+    operation: create
+    source: specs/c12-preflight-endpoint-probe/spec.md
+workspace:
+  isolation: current
+  change_branch: main
+  target_branch: main
+  finish: null
+loop:
+  stage: done
+  goal_cycle: 1
+  iteration: 1
+  attempt: 1
+  retry_epoch: 0
+  failed_iteration_count: 0
+  no_progress_count: 0
+  execution_failure_count: 0
+  previous_unresolved_ids: []
+  next_action: null
+acceptance:
+  - id: A1
+    source: brief.md
+    text: '**A1（离线）端口无人监听** → `check_pro_addin` 报
+      `pro-mcp-not-listening`、`ok=False`、`value["listening"] is False`、端点字段为
+      False。'
+    result: passed
+    reason:
+      text: 独立 harness：无监听端口 ->
+        ok=False、code=pro-mcp-not-listening、listening=False、endpoint_alive=False、endpoint_error='无监听者'
+        且不发 HTTP（_mcp_endpoint_alive 未被调用，见
+        tests/unit/test_preflight_pro_endpoint.py::CheckProAddinWiringTest.test_A1_not_listening_reports_baseline_code）。证据：%TEMP%/c12-verifier/probe_harness.py
+        'no-listener' PASS。
+      truncated: false
+  - id: A2
+    source: brief.md
+    text: '**A2（离线）原始 socket 监听者占住端口**（accept 后不回 HTTP）→ `ok=False`、报**新的占用类失败码**（与
+      `pro-mcp-not-listening` 可区分）、reason 含可执行排查动作（netstat/PID
+      或换端口）、`value["listening"] is True` 且端点字段为 False。'
+    result: passed
+    reason:
+      text: 独立 harness 起真原始/非 HTTP 监听者：ok=False、code=pro-port-occupied-by-other（!=
+        pro-mcp-not-listening）、listening=True（诊断保留）、endpoint_alive=False、reason
+        以「症状：」开头且含 netstat -ano|findstr:<port> 与 GEOCODE_PRO_PORT
+        换端口两条处置。证据：probe_harness.py 'occupied(non-http)'、'raw-only-listen' PASS。
+      truncated: false
+  - id: A3
+    source: brief.md
+    text: '**A3（离线）HTTP 返回 200 + 合法 JSON 但 `name != "geocode-pro"`** → 与 A2 同判（不是本
+      add-in 端点），不得报就绪。'
+    result: passed
+    reason:
+      text: 独立 harness：HTTP 200 + 合法 JSON 但 name='other-svc' -> alive=False、name 记录为
+        other-svc、err 含该值，不报就绪。另有非 HTTP、404、非 JSON body、JSON 数组分支均
+        False。证据：probe_harness.py
+        'mode=wrongname'/'badjson'/'listjson'/'status404' PASS。
+      truncated: false
+  - id: A4
+    source: brief.md
+    text: '**A4（离线）模拟本 add-in 的 `GET /`**（200 +
+      `{"name":"geocode-pro","version":…,"routes":["/mcp"],"hint":…}`）→ 在
+      `installed`/`deployed` 成立的前提下 `ok=True`、端点字段为 True。'
+    result: passed
+    reason:
+      text: 独立 harness：真子进程假端点回 {"name":"geocode-pro","version":...,"routes":["/mcp"]}
+        + 真 _port_listening ->
+        endpoint_alive=True、endpoint_name=='geocode-pro'、installed+deployed 成立时
+        ok=True、code==''。证据：probe_harness.py 'mode=good'、'good endpoint -> ok
+        True' PASS。
+      truncated: false
+  - id: A5
+    source: brief.md
+    text: "**A5（离线）半开/黑洞监听者**（accept 后永不响应）→ 探测在超时预算内返回 False，不挂死（用例带耗时上限断言）。"
+    result: passed
+    reason:
+      text: 独立 harness 实测半开（只 listen 不应答）0.83s、黑洞（accept 后永不响应）0.84s 均在有界时延内返回
+        False（timeout=0.8）。证据：probe_harness.py 前两行 PASS；测试侧另有 elapsed<6.0s 断言。
+      truncated: false
+  - id: A6
+    source: brief.md
+    text: '**A6（离线）`GEOCODE_PRO_PORT` 覆盖**（如 6999）→ 端点探测打在该端口，`value["port"]` 与之一致。'
+    result: passed
+    reason:
+      text: 独立 harness：设 GEOCODE_PRO_PORT=<内核端口> + port=None -> value['port']
+        与该端口一致且对同一端口探测就绪；显式 port= 入参同样生效；未设时回退
+        PRO_DEFAULT_PORT=6530。证据：probe_harness.py 'GEOCODE_PRO_PORT override'
+        PASS。
+      truncated: false
+  - id: A7
+    source: brief.md
+    text: '**A7（契约）** add-in 源码仍声明身份基准 `name = "geocode-pro"`（静态断言）；一旦 add-in
+      改名，测试立即失败，提示同步更新探测基准。'
+    result: passed
+    reason:
+      text: tests/unit/test_pro_addin.py::ProAddinPreflightTest.test_addin_endpoint_identity_contract
+        断言 preflight.PRO_ENDPOINT_NAME=='geocode-pro' 且 Pro/McpServerHost.cs 源码含
+        '["name"] = "geocode-pro"'（GET / 路由，第 115 行），把 add-in GET / 身份与
+        preflight 基准常量钉在一起；add-in 改名即失败。证据：git diff 该断言 + McpServerHost.cs 直读。
+      truncated: false
+  - id: A8
+    source: brief.md
+    text: "**A8（回归）** `python -m unittest discover -s tests/unit` 与 dotted-path
+      入口全绿；`probe_all()` 键面不变（`pro_addin` 仍在）且 `summarize()` 正常；除
+      `gis/preflight.py`、新增/更新的测试与本地件差异清单外无其他改动（`Pro/**`、`geocode.json`、`PROCES\
+      SING_VERSION` 零 diff）。"
+    result: passed
+    reason:
+      text: 独立复跑：discover -s tests/unit -> Ran 246
+        OK(16.0s)；tests.unit.test_spec_basics -> Ran 20 OK。probe_all() 键面
+        env/gee_local/pro_addin、summarize() 返回 str 不崩。改动面：git diff --name-only 仅
+        gis/preflight.py + tests/unit/test_pro_addin.py，另有 change 目录未跟踪件；Pro/ 与
+        geocode.json 零 diff；gis/spec.py 的 PROCESSING_VERSION = 3
+        未改。证据：%TEMP%/c12-verifier/git-status-start.txt + 复跑输出。
+      truncated: false
+  - id: A9
+    source: specs/c12-preflight-endpoint-probe/spec.md
+    text: 端口无人监听（基线不回退） `check_pro_addin()` 在 add-in
+      已安装、已部署、但目标端口没有任何监听者时：`ok=False`，`code="pro-mcp-not-listening"`，reason
+      保持既有可执行文案（提示打开 ArcGIS Pro / 检查 Add-In Manager），`value["listening"] is
+      False`，端点判定字段为 False。既有失败码 `pro-not-installed`、`pro-addin-not-deployed`
+      的判定优先级与文案不变。 （验收：A1）
+    result: passed
+    reason:
+      text: Spec 场景 1（基线不回退）与 A1 同一判据：无监听 ->
+        pro-mcp-not-listening、listening=False、端点字段 False，且 pro-not-installed /
+        pro-addin-not-deployed 优先级与文案不变（独立 harness 已分别验证三个失败码优先级）。
+      truncated: false
+  - id: A10
+    source: specs/c12-preflight-endpoint-probe/spec.md
+    text: 端口被非 add-in 进程占用（本 change 的核心修正） 目标端口有监听者，但 `GET http://127.0.0.1:<port>/`
+      不构成本 add-in 的端点时——包括：连接后不回 HTTP 响应、非 HTTP 协议应答、HTTP 状态非 200、body 不是合法
+      JSON、JSON 中 `name != "geocode-pro"`——探针必须： - `ok=False`； - 报**新的占用类失败码**（与
+      `pro-mcp-not-listening` 可区分，命名以实现为准）； - reason 说明「端口有监听但不是本 add-in
+      端点」并给出可执行动作（`netstat -ano` 查 PID / 结束占用者 / 或用 `GEOCODE_PRO_PORT` 换端口）； -
+      保留诊断信息：`value["listening"] is True`，端点判定字段为 False，且不得报「就绪」。 （验收：A2、A3）
+    result: passed
+    reason:
+      text: Spec 场景 2（核心修正）与 A2+A3 同一判据：独立 harness 覆盖连接后不回 HTTP（raw/blackhole）、非 HTTP
+        协议应答（garbage）、状态非 200（404）、body 非合法 JSON（badjson/listjson）、name
+        不匹配（wrongname）全部 -> ok=False、独立占用类码、reason 含 netstat/PID
+        与换端口处置、listening=True 且端点字段 False。
+      truncated: false
+  - id: A11
+    source: specs/c12-preflight-endpoint-probe/spec.md
+    text: 真实本 add-in 端点（就绪判定） 在 `installed and deployed` 成立、且 `GET
+      http://127.0.0.1:<port>/` 返回 200 + 合法 JSON + `name == "geocode-pro"`
+      时：`ok=True`，reason 表示 add-in 就绪，端点判定字段为 True。本 change 不修改该 GET 路由的响应体形状，只把
+      `name` 作为身份基准读取。 （验收：A4）
+    result: passed
+    reason:
+      text: Spec 场景 3（就绪判定）与 A4 同一判据：GET / 返回 200 + 合法 JSON + name==geocode-pro 时
+        ok=True（需 installed+deployed 成立），未改 add-in GET / 响应体形状，只读 name 作身份基准。
+      truncated: false
+  - id: A12
+    source: specs/c12-preflight-endpoint-probe/spec.md
+    text: 半开 / 黑洞监听者不得挂住探针 监听者 accept 连接后永不响应（或持续挂起）时，端点探测必须在有界时延内（连接 + 读取合计约 2
+      秒量级）返回 False，并按占用类失败码处理；探针不得无限等待。该场景是「端口被占用」的一种退化形态，不是崩溃路径。 （验收：A5）
+    result: passed
+    reason:
+      text: Spec 场景 4（有界时延）与 A5 同一判据：半开与黑洞两态均在 timeout 预算内（实测 ~0.84s，< 约 2s 量级）有界返回
+        False，探针不挂死。
+      truncated: false
+  - id: A13
+    source: specs/c12-preflight-endpoint-probe/spec.md
+    text: 端口覆盖沿用既有语义 `GEOCODE_PRO_PORT` 覆盖或显式 `port=`
+      入参时，端点探测与端口探测使用同一端口：`value["port"]` 与探测目标一致；未设置时回退
+      `6530`（`PRO_DEFAULT_PORT`）。 （验收：A6）
+    result: passed
+    reason:
+      text: Spec 场景 5（端口覆盖）与 A6 同一判据：GEOCODE_PRO_PORT 覆盖与显式 port= 入参使端点探测与端口探测共用同一
+        port 变量，value['port'] 与探测目标一致；未设时回退 PRO_DEFAULT_PORT=6530（未改端口契约）。
+      truncated: false
+  - id: A14
+    source: specs/c12-preflight-endpoint-probe/spec.md
+    text: 身份基准的契约守卫 探测依赖 add-in `GET /` 的 `name == "geocode-pro"`。必须有静态断言锁住该事实：若
+      `Pro/McpServerHost.cs` 中该字段被改名或删除，测试立即失败，提示同步更新探测基准与本文档。该断言只读源码文本，不需 Pro
+      会话。 （验收：A7）
+    result: passed
+    reason:
+      text: Spec 场景 6（契约守卫）与 A7 同一判据：静态断言只读 Pro/McpServerHost.cs 源码文本、不需 Pro 会话，锁住
+        name==geocode-pro；改名/删字段会立即失败并提示同步更新探测基准与文档。
+      truncated: false
+  - id: A15
+    source: specs/c12-preflight-endpoint-probe/spec.md
+    text: 离线回归与改动面 - `python -m unittest discover -s tests/unit` 与 `python -m
+      unittest tests.unit.test_spec_basics` 两条入口全绿；新增用例计入总数。 -
+      `probe_all(network=False)` 键面不变（仍含 `env` / `gee_local` /
+      `pro_addin`），`summarize()` 不因新增字段异常。 - 改动面限定：`gis/preflight.py` +
+      `tests/unit/**`（新增与更新）+
+      本地件差异清单载体；`Pro/**`、`geocode.json`、`PROCESSING_VERSION` 零 diff。 （验收：A8）
+    result: passed
+    reason:
+      text: Spec 场景 7（离线回归与改动面）与 A8 同一判据：两条入口全绿（246 / 20）、probe_all/summarize 不回退、改动限定
+        gis/preflight.py + tests/unit/** + change
+        目录清单，Pro/**、geocode.json、PROCESSING_VERSION 零 diff。
+      truncated: false
+  - id: A16
+    source: specs/c12-preflight-endpoint-probe/spec.md
+    text: 测试全部离线且不污染本机 新增用例通过**进程内起假服务器**（绑定 `127.0.0.1:0` 由系统分配端口后注入
+      `port=`）或**假原始监听者**覆盖各分支；不依赖 Pro 是否安装/运行、不占用固定 6530/6531、用例结束即释放监听，可在无 Pro
+      的环境下全绿。 （验收：A1–A6）
+    result: passed
+    reason:
+      text: 独立 AST 扫描 tests/unit/test_preflight_pro_endpoint.py：顶层 import 仅
+        gis/json/os/pathlib/subprocess/sys/tempfile/time/unittest，无
+        socket/http/urllib 等 BANNED；假服务器/假监听者由子进程（subprocess + sys.executable
+        -c）承载，端口 bind('127.0.0.1',0) 内核分配，__exit__ terminate+wait+cleanup
+        释放监听；测试用例不依赖 Pro（涉及 ok 的断言以 installed/deployed 为条件）。test_offline_guard
+        独立复跑 OK。注：Spec A16 措辞为「进程内起假服务器」，实现改用子进程（因离线守卫禁止 tests/unit 导入
+        socket），实质要求（离线、不占固定端口、用例结束释放、无 Pro 可跑）均满足。
+      truncated: false
+  - id: A17
+    source: specs/c12-preflight-endpoint-probe/spec.md
+    text: "文档收口（D9 惯例） `docs/README.md` 为 gitignored 本地文档，本 change
+      不在其工作副本内直接改动，而以「待执行差异清单」交付：§8.6 #30 由「已知局限」改为「已由 C12 修复」（保留净结论与回归方式），并在
+      §9.1/§9.2 追加 C12 台账行。清单四列（现状/改为/依据/回退）齐备、逐条可逆。 （验收：A8 的改动面部分）"
+    result: passed
+    reason:
+      text: "独立脚本从 local-changes.md 抽取 5 个「现状逐字」块与主工作区 docs/README.md
+        对应行逐字节比较：L558/L544/L380/L375/L398 全部 exact=True（长度 287/48/434/432/215
+        全等），无省略号；5 条差异（§8.6 #30 行、§8.6 标题、§9.1 台账追加行、§9.1 line375 下一步行、§9.2
+        台账追加行）均四列齐备（现状/改为/依据/回退），逐条可逆。证据：%TEMP%/c12-verifier/check_readme.py +
+        输出。"
+      truncated: false
+builder_handoff:
+  candidate_id: 4ca7f248-92b2-4112-8345-2636a7d481b7
+  identity_provider: skill-coordinated
+  builder_execution_ref: skill-coordinated:builder:fdd1fcf5-1d34-429d-bf1f-bd2218929d5f
+  iteration: 1
+  summary:
+    text: 'C12 iteration 1（实现完成）：把 gis/preflight.py 的 Pro add-in
+      探测从「端口有没有监听者」升级为**端点级探测**，兑现 C11 §8.6 #30 的立项。实现：新增
+      PRO_ENDPOINT_NAME="geocode-pro"（add-in 的 GET / 稳定身份字段，Pro/McpServerHost.cs
+      提供，非版本相关）与 _mcp_endpoint_alive(port, timeout=1.5)——本机 GET
+      http://127.0.0.1:<port>/ 须 200 + body 可解析为 JSON + name==geocode-pro，显式用空
+      ProxyHandler 禁用代理，任何异常/不匹配都归为「不是本端点」而不向上抛；check_pro_addin 的 ok 由 installed
+      and deployed and listening 改为 installed and deployed and
+      endpoint_alive，listening 保留为诊断字段，value 新增
+      endpoint_alive/endpoint_name/endpoint_error；新增独立失败码
+      pro-port-occupied-by-other（与 pro-mcp-not-listening
+      可区分——「别人占着」与「没人听」处置不同），reason 给 netstat -ano 查 PID / 结束占用者 / 或设
+      GEOCODE_PRO_PORT 换端口的可执行处置；端点探测叠加在零字节 connect 之后（端口没人接就不发 HTTP）。测试：新增
+      tests/unit/test_preflight_pro_endpoint.py 共 12 条离线用例（真打真连的假端点/假原始监听者/非
+      HTTP 应答/身份不匹配/黑洞挂起有界超时/端口覆盖/失败码与 value 字段/probe_all 与 summarize
+      形状），假服务器一律用子进程承载以遵守离线守卫（tests/unit 禁止导入
+      socket/http/urllib）；test_pro_addin.py 更新受 ok 语义变化影响的断言、并新增身份基准契约守卫（断言
+      Pro/McpServerHost.cs 仍声明 name=geocode-pro，add-in 改名即刻失败）。回归：全量 246
+      用例全绿（C11 基线 233 + 12 新 + 1 契约守卫）、dotted-path 入口全绿。改动面：gis/preflight.py +
+      tests/unit/**（新增与更新）+ change 目录内的 D9
+      差异清单；Pro/**、geocode.json、PROCESSING_VERSION 零 diff。另：主工作区的
+      Pro/GeoCodePro.addin.zip 被发现是 C11 之前的旧产物（导致 5 条 zip 依赖用例失败），已按用例前提重建
+      zip（package_pro_addin.py build，纯恢复前提，未部署、未改 Pro/ 源码）。'
+    truncated: false
+  addressed_acceptance_ids:
+    - A1
+    - A2
+    - A3
+    - A4
+    - A5
+    - A6
+    - A7
+    - A8
+    - A9
+    - A10
+    - A11
+    - A12
+    - A13
+    - A14
+    - A15
+    - A16
+    - A17
+  acceptance_review:
+    - id: A1
+      status: implemented-with-evidence
+      evidence:
+        - tests/unit/test_preflight_pro_endpoint.py::CheckProAddinWiringTest.test_A1_not_listening_reports_baseline_code：mock
+          _port_listening=False → ok=False、value["listening"]=False、endpoint 字段
+          False；断言 _mcp_endpoint_alive 未被调用（端口没人接不发 HTTP）
+        - （installed and deployed 成立时）code == pro-mcp-not-listening，与既有码一致
+      note: 基线报文与优先级未改。
+    - id: A2
+      status: implemented-with-evidence
+      evidence:
+        - 'test_A2_occupied_but_not_our_endpoint_gets_distinct_code：mock
+          listening=True + 端点探测 (False,None,"TimeoutError: timed out") →
+          ok=False、listening=True（诊断保留）、endpoint_alive=False、endpoint_error
+          记录；installed+deployed 时 code==pro-port-occupied-by-other 且 !=
+          pro-mcp-not-listening、reason 以「症状：」开头且含 netstat'
+        - test_A2_end_to_end_with_real_raw_listener：子进程真原始监听者（只 listen 不应答）→
+          listening=True、endpoint_alive=False、ok=False，installed+deployed 时
+          code==pro-port-occupied-by-other
+      note: 「别人占着」与「没人听」用不同码与不同处置文案区分。
+    - id: A3
+      status: implemented-with-evidence
+      evidence:
+        - test_A3_http_json_with_other_identity_is_not_our_endpoint：子进程假服务器回 200
+          + 合法 JSON 但 name="someone-else" → alive=False、name 记录为
+          someone-else、err 含该值
+        - test_A2_non_http_responder_is_not_our_endpoint：非 HTTP 应答 →
+          alive=False、err 非空（不抛异常）
+      note: HTTP 200 + 合法 JSON 不再足够——必须身份匹配，故不得报就绪。
+    - id: A4
+      status: implemented-with-evidence
+      evidence:
+        - test_A4_endpoint_identity_matches_addin_shape：子进程假服务器回本 add-in 的 GET /
+          形状（name=geocode-pro + version/routes/hint）→
+          alive=True、name==PRO_ENDPOINT_NAME、err=None
+        - test_A4_ready_requires_our_endpoint：mock 端点 (True,"geocode-pro",None)
+          → endpoint_alive=True，installed+deployed 时 ok=True 且 code==""
+        - test_A4_end_to_end_with_real_fake_endpoint：真子进程假端点 + 真 _port_listening
+          → listening=True、endpoint_alive=True（installed+deployed 时 ok=True）
+      note: 未改 add-in 的 GET / 响应形状，只把其中的 name 作为身份基准读取。
+    - id: A5
+      status: implemented-with-evidence
+      evidence:
+        - test_A5_raw_listener_times_out_within_budget：只 listen 不应答（半开）→
+          alive=False 且有界返回，断言 elapsed < 6.0s（实测约 0.6s，timeout 参数 0.6）
+        - test_A5_blackhole_listener_times_out_within_budget：accept 后永不响应 →
+          同样有界返回 False
+      note: _mcp_endpoint_alive 的连接与读取均受 timeout 约束；半开/黑洞监听者不会挂住探针。
+    - id: A6
+      status: implemented-with-evidence
+      evidence:
+        - test_A6_port_override_applies_to_endpoint_probe：mock.patch.dict(os.environ,
+          {"GEOCODE_PRO_PORT":"6999"}) + port=None → value["port"]==6999 且断言
+          _mcp_endpoint_alive 以 6999 调用（probe.call_args）
+      note: 端点探测与端口探测共用同一 port 变量，覆盖语义沿用既有行为；未设时回退 PRO_DEFAULT_PORT=6530。
+    - id: A7
+      status: implemented-with-evidence
+      evidence:
+        - tests/unit/test_pro_addin.py::ProAddinPreflightTest.test_addin_endpoint_identity_contract：断言
+          preflight.PRO_ENDPOINT_NAME == "geocode-pro" 且 Pro/McpServerHost.cs
+          源码含 '["name"] = "geocode-pro"'
+        - 该断言在 246 用例批次内全绿；只读源码文本，不需 Pro 会话
+      note: add-in 侧改名/删字段会立刻让该契约守卫失败，提示同步更新探测基准与文档。
+    - id: A8
+      status: implemented-with-evidence
+      evidence:
+        - python -m unittest discover -s tests/unit → Ran 246 tests, OK（C11 基线
+          233 + 本 change 新增 12 + 1 契约守卫）
+        - python -m unittest tests.unit.test_spec_basics → Ran 20 tests, OK
+        - test_A8_value_keys_and_probe_all_shape：断言 value
+          同时含旧字段（pro_bin/installed/addin_dir/addin_files/addin_zips/deployed/port/listening）与新字段（endpoint_alive/endpoint_name/endpoint_error）；probe_all()
+          键面仍含 pro_addin；summarize(res) 返回 str 不抛
+        - git diff --name-only 只含 gis/preflight.py 与 tests/unit；git status 另有
+          change 目录内 brief/spec/local-changes.md；Pro/、geocode.json 零
+          diff；gis/spec.py 的 PROCESSING_VERSION = 3 未改
+      note: 另：主工作区 zip 过期（C11 之前）曾致 5 条 zip 依赖用例失败，已按用例前提 package_pro_addin.py build
+        重建（未部署、未动 Pro/ 源码）。
+    - id: A9
+      status: implemented-with-evidence
+      evidence:
+        - 同 A1：端口无人监听时的基线报文、listening=False、端点字段 False、且不发
+          HTTP（_mcp_endpoint_alive 未被调用）
+      note: Spec 场景 1（基线不回退）与 A1 同一判据。
+    - id: A10
+      status: implemented-with-evidence
+      evidence:
+        - 同 A2/A3：覆盖「连接后不回 HTTP / 非 HTTP 应答 / 状态非 200 / body 非合法 JSON / name
+          不匹配」各分支——分别由 raw、garbage、wrongname 子进程用例与 mock
+          用例验证；OK=False、新增占用类失败码、reason 含 netstat/PID 与换端口两条处置
+      note: Spec 场景 2（核心修正）与 A2+A3 同一判据；实测覆盖了该场景列举的全部退化形态。
+    - id: A11
+      status: implemented-with-evidence
+      evidence:
+        - 同 A4：GET / 返回 200 + 合法 JSON + name==geocode-pro 时判定就绪（ok=True 需
+          installed+deployed 同时成立）
+      note: Spec 场景 3 与 A4 同一判据。
+    - id: A12
+      status: implemented-with-evidence
+      evidence:
+        - 同 A5：半开（只 listen）与黑洞（accept 不响应）两态均在 timeout 预算内有界返回 False，并用 elapsed
+          上限断言证明不挂死
+      note: Spec 场景 4 与 A5 同一判据。
+    - id: A13
+      status: implemented-with-evidence
+      evidence:
+        - 同 A6：GEOCODE_PRO_PORT 覆盖与显式 port= 入参都作用于端点探测；未设时回退 6530
+      note: Spec 场景 5 与 A6 同一判据。
+    - id: A14
+      status: implemented-with-evidence
+      evidence:
+        - 同 A7：身份基准契约守卫（PRO_ENDPOINT_NAME 常量 + add-in 源码静态断言）
+      note: Spec 场景 6 与 A7 同一判据。
+    - id: A15
+      status: implemented-with-evidence
+      evidence:
+        - 同 A8：两条入口全绿（246 / 20）、probe_all 键面与 summarize 不回退、改动面限定在
+          gis/preflight.py + tests/unit/** + change
+          目录清单，Pro/、geocode.json、PROCESSING_VERSION 零 diff
+      note: Spec 场景 7 与 A8 同一判据。
+    - id: A16
+      status: implemented-with-evidence
+      evidence:
+        - tests/unit/test_preflight_pro_endpoint.py 不导入任何网络库（离线守卫
+          test_offline_guard.py 的 BANNED 名单在 246
+          批次内全绿）；假服务器/假监听者一律用子进程承载（subprocess + sys.executable -c）
+        - 所有端口由内核分配（bind 127.0.0.1:0 后写 portfile 回传），不占用固定 6530/6531；_FakeServer
+          上下文管理器退出即 terminate+wait 释放监听
+        - 用例不依赖 Pro 是否安装/运行（涉及 ok 的断言都以 value["installed"]/["deployed"] 为条件）
+      note: 12 条新用例实测耗时约 9.8s（含两次超时用例各约 0.6s）。
+    - id: A17
+      status: implemented-with-evidence
+      evidence:
+        - "docs/comet/changes/c12-preflight-endpoint-probe/local-changes.md：5
+          条差异（§8.6 #30 行、§8.6 标题、§9.1 台账追加行、§9.1 line375 下一步行、§9.2
+          台账追加行），每条四列齐备（现状/改为/依据/回退）"
+        - 所有「现状」为逐字全文 + 当前行号（L558 / L544 / L380 / L375 /
+          L398），无省略号；另含「不动的部分」与执行备忘（改后插避免行号漂移、回填项、整体备份提示）
+        - docs/README.md 工作副本零改动（gitignored，按 D9 由归档轮在主工作区执行）
+      note: 载体在 git 跟踪的 change 目录内，随归档进入 docs/comet/archive/**。
+  checks:
+    - name:
+        text: offline-unit-discover
+        truncated: false
+      result: passed
+      note:
+        text: geo env：discover -s tests/unit → Ran 246 tests, OK（233 基线 + 12 新 + 1 契约守卫）
+        truncated: false
+    - name:
+        text: offline-unit-dotted-path
+        truncated: false
+      result: passed
+      note:
+        text: geo env：-m unittest tests.unit.test_spec_basics → Ran 20 tests, OK
+        truncated: false
+    - name:
+        text: new-endpoint-suite
+        truncated: false
+      result: passed
+      note:
+        text: -m unittest tests.unit.test_preflight_pro_endpoint -v → 12 条全 ok（含 2
+          条真打真连的子进程假服务器用例）
+        truncated: false
+    - name:
+        text: offline-guard
+        truncated: false
+      result: passed
+      note:
+        text: test_offline_guard.py 的 AST 扫描通过：新测试文件未导入 socket/http/urllib 等禁用库
+        truncated: false
+    - name:
+        text: zero-diff-invariants
+        truncated: false
+      result: passed
+      note:
+        text: Pro/ 零 diff、geocode.json 零 diff、PROCESSING_VERSION = 3 未改；改动面仅
+          gis/preflight.py + tests/unit/** + change 目录
+        truncated: false
+    - name:
+        text: stale-zip-restored
+        truncated: false
+      result: passed
+      note:
+        text: 主工作区 zip 为 C11 之前产物致 5 条 zip 依赖用例失败；package_pro_addin.py build
+          重建后全绿（未部署、未改 Pro/ 源码）
+        truncated: false
+  checks_truncated: false
+  known_limits:
+    - text: 端点身份基准依赖 add-in 的 GET / 字段
+        name=="geocode-pro"（Pro/McpServerHost.cs）。该耦合由静态契约守卫钉住（add-in
+        改名会立刻失败），但改名时须同步更新 preflight 常量与本地件清单。
+      truncated: false
+    - text: 本 change 不做完整 MCP initialize 握手（非目标）：一个「自称
+        name=geocode-pro」的冒充服务仍会被判为本端点；若将来要排除这种情形，另立 change。
+      truncated: false
+    - text: 端口被「不响应型」监听者占用时，端点探测必然消耗到 timeout（默认 1.5s）才判
+        False——这是有界但非零的代价；`check_pro_addin` 在该情形下由毫秒级变为秒级。
+      truncated: false
+    - text: 测试必须跑在 conda env geo 下（系统 Python312 缺 pyproj）；zip
+        依赖用例（PackageStructureTest / DamlValidityTest / DockpaneDamlTest）需
+        Pro/GeoCodePro.addin.zip 存在且为当前源码构建，未构建时这些用例被 skipUnless 跳过。
+      truncated: false
+    - text: 本轮为就地 current 工作区（无独立分支/合并提交），归档轮需在主工作区执行 README 差异清单并回填提交号。
+      truncated: false
+  known_limits_truncated: false
+  review: null
+  submitted_at: 2026-10-08T14:54:34.573Z
+blockers: []
+verification:
+  candidate_id: 4ca7f248-92b2-4112-8345-2636a7d481b7
+  identity_provider: skill-coordinated
+  verifier_execution_ref: skill-coordinated:verifier:af0ab189-c356-4261-ba0a-72182df87c0c
+  iteration: 1
+  attempt: 1
+  assurance: skill-coordinated
+  verdict: pass
+  checks:
+    - id: unit-discover
+      name:
+        text: unit-discover
+        truncated: false
+      argv_display:
+        - text: -m
+          truncated: false
+        - text: unittest
+          truncated: false
+        - text: discover
+          truncated: false
+        - text: -s
+          truncated: false
+        - text: tests/unit
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 17731
+    - id: unit-dotted-path
+      name:
+        text: unit-dotted-path
+        truncated: false
+      argv_display:
+        - text: -m
+          truncated: false
+        - text: unittest
+          truncated: false
+        - text: tests.unit.test_spec_basics
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 287
+    - id: endpoint-suite
+      name:
+        text: endpoint-suite
+        truncated: false
+      argv_display:
+        - text: -m
+          truncated: false
+        - text: unittest
+          truncated: false
+        - text: tests.unit.test_preflight_pro_endpoint
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 9618
+  summary:
+    text: 独立只读验收 17/17 通过：独立 harness（真 socket，20/20）验证端点级探测对半开/黑洞/非 HTTP/404/非
+      JSON/身份不匹配判 False 且有界、对真 add-in 形状判 True；无监听仍
+      pro-mcp-not-listening，占用态报独立码 pro-port-occupied-by-other 且 reason 可执行；ok 以
+      endpoint_alive 为准、value 兼留旧字段；GEOCODE_PRO_PORT 覆盖有效；两条入口 246/20
+      全绿；Pro/、geocode.json 零 diff、PV=3；A16 离线守卫与内核分配端口合规；A17 五条现状引用块与 README
+      L558/L544/L380/L375/L398 逐字节一致、四列齐备。verdict=pass。
+    truncated: false
+  risks:
+    - text: 端点身份基准耦合 add-in GET / 的 name 字段；由静态契约守卫钉住（A7/A14），但 add-in 改名时须同步更新
+        preflight 常量与本地件清单——已由实现者记录为已知局限。
+      truncated: false
+    - text: 本 change 不做完整 MCP initialize 握手（非目标）：一个自称 name=geocode-pro 的冒充服务仍会被判为本端点。
+      truncated: false
+    - text: 端口被不响应型监听者占用时，探测必然消耗到 timeout（默认 1.5s；测试传 0.6-1.0s）才判 False——有界但非零代价。
+      truncated: false
+    - text: 主工作区 Pro/GeoCodePro.addin.zip 在 Build 期被按用例前提重建（gitignored，不属 diff
+        面）。该动作未改 Pro/ 源码、未部署，不影响本 change 任何判据；但归档时若需 zip 与源码一致，应知悉该重建来自 C11
+        之前的旧产物。
+      truncated: false
+    - text: Spec A16 原文「进程内起假服务器」与实现的子进程方案措辞不符（由离线守卫禁止 tests/unit 导入 socket
+        所致）；实质验收要求满足，仅措辞偏差。
+      truncated: false
+  risks_truncated: false
+  completed_at: 2026-10-08T14:58:49.947Z
+history:
+  - goal_cycle: 1
+    iteration: 1
+    attempt: 1
+    outcome: pass
+    unresolved_ids: []
+    summary:
+      text: 独立只读验收 17/17 通过：独立 harness（真 socket，20/20）验证端点级探测对半开/黑洞/非 HTTP/404/非
+        JSON/身份不匹配判 False 且有界、对真 add-in 形状判 True；无监听仍
+        pro-mcp-not-listening，占用态报独立码 pro-port-occupied-by-other 且 reason 可执行；ok
+        以 endpoint_alive 为准、value 兼留旧字段；GEOCODE_PRO_PORT 覆盖有效；两条入口 246/20
+        全绿；Pro/、geocode.json 零 diff、PV=3；A16 离线守卫与内核分配端口合规；A17 五条现状引用块与 README
+        L558/L544/L380/L375/L398 逐字节一致、四列齐备。verdict=pass。
+      truncated: false
+    completed_at: 2026-10-08T14:58:49.947Z
+history_overflow:
+  dropped_entries: 0
+  first_dropped_at: null
+  last_dropped_at: null
+  outcome_counts:
+    pass: 0
+    fail: 0
+    blocked: 0
+    execution-error: 0
+    recovery: 0
+verification_result: pass
+verification_report: verification.md
+archived: true
+created_at: 2026-10-08T14:10:53.737Z
