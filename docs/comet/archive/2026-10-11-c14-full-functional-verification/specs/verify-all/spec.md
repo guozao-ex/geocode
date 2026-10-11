@@ -1,4 +1,4 @@
-# verify-all — 全量功能自动化验证入口
+# Capability：verify-all —— 全量功能自动化验证入口
 
 `tests/verify_all.py` 是 GeoCode 的统一全量功能验证入口：一条命令在本地完成全部可离线执行的功能检查，自动编排 daemon 生命周期，产出结构化报告与机器可读覆盖矩阵。既有检查资产（tests/unit、tests/smoke_*.py）行为零修改，本入口只做编排、生命周期管理与报告。
 
@@ -49,37 +49,30 @@ TUI 与 daemon 的功能覆盖映射：TUI 渲染面由 tui-timeseries-probe 承
 
 任一 RUN 项 FAIL → 1；否则（全部 PASS 或 SKIP）→ 0。
 
-## Scenario: 全量验证一条命令跑通
+### Scenario: 全量验证一条命令跑通（验收：A1）
 
 哥哥在仓库根执行 `python tests/verify_all.py`，入口自动起停 daemon，无需任何手工前置步骤；RUN 层全部执行，SKIP 层保持跳过；结束后打印汇总并按退出码语义返回。
-验收：A1
 
-## Scenario: 覆盖矩阵防漏测
+### Scenario: 覆盖矩阵防漏测（验收：A2）
 
 报告中的覆盖矩阵覆盖 README 全部功能面模块；每个模块至少映射一项实际检查项（RUN 或 SKIP），无法映射的模块显式标 `uncovered` 而非静默缺失。
-验收：A2
 
-## Scenario: 离线层零网络通过
+### Scenario: 离线层零网络通过（验收：A3）
 
 tests/unit 全量用例、tui-timeseries-probe、daemon-endpoint-probe（及前置产物存在时的 rescan-big）执行通过；全程对外网请求为零（仅本地回环 127.0.0.1 访问）。
-验收：A3
 
-## Scenario: 在线依赖项显式跳过
+### Scenario: 在线依赖项显式跳过（验收：A4）
 
 smoke_emit、smoke_three_exits、smoke_presets、smoke_timeseries、smoke_osm、smoke_tui、smoke_map_renderers（缓存未命中时）、smoke-array-chunking-rescan-big（前置产物缺失时）被标记 SKIP，报告中可见原因与单独复跑方式；入口不提供 --online 开关。
-验收：A4
 
-## Scenario: JSON 报告可机读
+### Scenario: JSON 报告可机读（验收：A5）
 
 `logs/verify_all_report.json` 落盘且字段完整（名称/模块/层/状态/耗时/日志路径，失败项含输出摘要）；控制台摘要与 JSON 内容一致。
-验收：A5
 
-## Scenario: 既有资产行为零修改
+### Scenario: 既有资产行为零修改（验收：A6）
 
 tests/ 下 9 个 smoke 与 tests/unit 的既有代码在本 change 中不被修改（git diff 为空）；入口仅编排运行。
-验收：A6
 
-## Scenario: 不真实启动 ArcGIS Pro
+### Scenario: 不真实启动 ArcGIS Pro（验收：A7）
 
 全量验证全程不启动 ArcGIS Pro UI 进程；add-in/arcpy 面的验证由 tests/unit 断言（test_pro_addin、test_preflight_pro_endpoint）承担，并在覆盖矩阵中体现为 add-in 探测/arcpy bridge 模块的检查项。
-验收：A7

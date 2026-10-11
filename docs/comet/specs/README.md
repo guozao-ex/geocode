@@ -29,6 +29,7 @@ capability 的行为，必须在此**追加一行**并给对方 spec 加注记�
 | `p2-presets`（C4）、`p2-batch-export`（C5） | H1 补 `Capability：<目录名> —— ` 前缀（此前为裸标题） | 2026-10-08（C13） |
 | `c13-spec-consistency`（C13，自身） | 本 change 自己的 spec 也曾用「引用写在标题外独立行」形态（与 C12 同类）——**由本 change 新增的结构守卫抓出**（全量测试转红）；已把 12 个 Scenario 的 `（验收：Ax）` 移入标题并改用 Runtime 编号 **A13–A24**、删除 12 行标题外引用，双副本同步 | 2026-10-08（C13 归档后自纠） |
 | `p3-skill-knowledge`(C7) / `p3-osm-overpass`(C8) / `p1b-arcgis-addin`(C9) / `c10-review-patches`(C10) / `dockpane`(C11) | 各 Scenario 标题补 `（验收：Ax）`（共 40 条：5+8+8+9+10），映射见 `spec-revision-list.md` §F6 | 2026-10-08（C13） |
+| `verify-all`（C14，自身） | 本 change 自己的 spec 偏离两条发布面规范：①H1 为裸标题 `# verify-all — …`（补齐 `Capability：` 前缀与 ` —— ` 分隔）；②Scenarios 写成 `## Scenario:`（与章节同级）且引用写在标题外独立行——已改为 `### Scenario: …（验收：Ax）`（A1–A7，与 brief 验收集同号）并删除 7 行独立引用。**由 C13 结构守卫在 C14 归档后抓出**（全量单测转红：H1 前缀 / Scenario 存在性共 3 条断言）；发布面与归档面双副本同步 | 2026-10-11（C14 归档后自纠） |
 
 ## 二、发布面四条规范
 
