@@ -99,9 +99,12 @@ UNAFFECTED_LEGACY = (
     "COPERNICUS/S2_HARMONIZED",
     "MODIS/061/MOD13Q1",
     "MODIS/061/MOD11A2",
-    "COPERNICUS/DEM/GLO30",
     "JRC/GSW1_4/GlobalSurfaceWater",
 )
+# 注：COPERNICUS/DEM/GLO30 原在本表内，2026-10-11 移出 —— 它是 26076 片 1° 瓦片的集合，
+# 此前缺 collection_only/tile_mosaic 标志，走单景分支直接报 "is not an Image"（即该预设从
+# 未被真跑过）；现已正确声明装载方式。装载标志不影响像素输出，但本表断言的口径是
+# 「字段缺省 ⇒ 行为逐字节不变」，故不再适用；它的像素级快照仍由上面的 snapshot 表覆盖。
 # 本次被有意修正的既有预设（补官方 offset）
 AFFECTED_LEGACY = ("LANDSAT/LC08/C02/T1_L2", "LANDSAT/LC09/C02/T1_L2")
 

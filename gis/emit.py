@@ -36,6 +36,14 @@ if TYPE_CHECKING:  # 仅用于注解；运行时仍是各函数内的惰性导�
 # getDownloadURL 单次请求的像素上限（经验值）
 MAX_DIRECT_PIXELS = 64_000_000
 
+# getDownloadURL 单次请求的**字节**上限（GEE 硬限）。实测报错原文：
+#   "Total request size (91916930 bytes) must be less than or equal to 50331648 bytes"
+# 每像素每波段按 float32(4B) + mask(1B) = 5B 计：实测 18,383,386 px × 5B = 91,916,930B，
+# 与 GEE 报的数字逐字节吻合。像素守卫（64M）管不到这个维度 —— 泰安市 30m DEM 只有
+# 18.4M 像素轻松过闸，下载时照样被 48MB 拍死（2026-10-11 真实数据运行实测）。
+MAX_DOWNLOAD_BYTES = 50_331_648          # 50,331,648 B = 48 MiB
+MAX_DOWNLOAD_BYTES_PER_PIXEL_BAND = 5
+
 # 波段参数哨兵：单期路径沿用 spec.bands；时序堆叠路径显式传 None
 # （toBands() 后波段名是 期前缀_波段，再传 spec.bands 会 band-not-found）
 _SPEC_BANDS = object()
@@ -350,6 +358,23 @@ def _fetch_tif(
             f"而非『下载重计算结果』。"
         )
 
+    # 字节维度守卫：像素数守卫放行的网格，仍可能被 GEE 的 48MB 单请求上限拒掉
+    n_bands_est = 1 if spec.band_expr else (
+        len(bands) if bands not in (_SPEC_BANDS, None) else (len(spec.bands) if spec.bands else 1))
+    est_download = est * n_bands_est * MAX_DOWNLOAD_BYTES_PER_PIXEL_BAND
+    if est_download > MAX_DOWNLOAD_BYTES:
+        raise ValueError(
+            f"下载体积估算 {est_download/1048576:.1f} MB 超 GEE 单次请求上限 "
+            f"{MAX_DOWNLOAD_BYTES/1048576:.0f} MB"
+            f"（{grid.width}×{grid.height} × {n_bands_est} 波段 × "
+            f"{MAX_DOWNLOAD_BYTES_PER_PIXEL_BAND} B/像素）。\n"
+            f"  出路（按省事排序）：\n"
+            f"    1. 放大 scale（当前 {spec.scale}m；放大一倍，体积降到 1/4）\n"
+            f"    2. 缩小 AOI（按区县切分，产物本地拼接）\n"
+            f"    3. 该出口改用 array（emit_array 走 xee computePixels，无此上限）\n"
+            f"    4. 批处理导出 Export.image.toDrive（异步任务，未接）"
+        )
+
     job.progress("申请下载链接", 15, f"{grid.width}×{grid.height} @ {grid.scale}m")
     from .spec import aoi_bbox as _aoi_bbox
     region = list(_aoi_bbox(spec.aoi) or ())
@@ -367,7 +392,9 @@ def _fetch_tif(
         "filePerBand": False,
     }
     if bands is _SPEC_BANDS:
-        bands = list(spec.bands) if spec.bands else None
+        # band_expr 之后影像只剩表达式产出的波段（名字由 GEE 取，如 "(B8-B4)/(B8+B4)" → "B8"），
+        # 再按 spec.bands 去要会报 "Image has no band named B4"（2026-10-11 实测）⇒ 不传 bands。
+        bands = None if spec.band_expr else (list(spec.bands) if spec.bands else None)
     if bands:
         params["bands"] = list(bands)
     job.check_cancelled()

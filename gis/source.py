@@ -76,6 +76,10 @@ class AssetPreset:
     collection_only: bool = False
     # 集合内仅 1 景：整体塌缩安全且确定（WorldCover v200），单景分支可走 mosaic()。
     single_image_asset: bool = False
+    # 分块瓦片集合：全集就是按 1° 瓦片铺开的一张大图，必须先按 AOI filterBounds 再 mosaic
+    # （实测 GLO30 = 26076 片；不过滤直接 mosaic 会撞 GEE 的集合规模上限）。
+    # 瓦片互不重叠 ⇒ 塌缩安全且确定。蕴含 collection_only。
+    tile_mosaic: bool = False
 
     def __post_init__(self) -> None:
         """契约自检。既有 8 条预设不触发其中任何一条。"""
@@ -95,6 +99,8 @@ class AssetPreset:
             raise ValueError(f"{self.asset}: 合成预设必须声明 collection_only=True。")
         if self.single_image_asset and not self.collection_only:
             raise ValueError(f"{self.asset}: single_image_asset 蕴含 collection_only。")
+        if self.tile_mosaic and not self.collection_only:
+            raise ValueError(f"{self.asset}: tile_mosaic 蕴含 collection_only（它是集合资产）。")
 
 
 # ESA WorldCover v200 的类表（2026-10-06 取自 GEE 资产属性 Map_class_values /
@@ -159,9 +165,13 @@ DEFAULT_ASSETS: dict[str, AssetPreset] = {
         "MODIS/061/MOD11A2", "MODIS 地表温度 8 天 1km",
         scale=1000, bands=("LST_Day_1km", "LST_Night_1km"), dtype="uint16",
     ),
+    # 2026-10-11 真实数据运行暴露：GLO30 是 26076 片 1° 瓦片的集合（GEE 已将其标为
+    # deprecated，官方指向 COPERNICUS/DEM/GLO30_2024_1）。此前缺 collection_only，
+    # 按单景走 ee.Image(asset) 直接报 "is not an Image" —— 本预设从未被真跑过。
     "COPERNICUS/DEM/GLO30": AssetPreset(
         "COPERNICUS/DEM/GLO30", "Copernicus DEM GLO-30",
         scale=30, bands=("DEM",), dtype="float32",
+        collection_only=True, tile_mosaic=True,
     ),
     "JRC/GSW1_4/GlobalSurfaceWater": AssetPreset(
         "JRC/GSW1_4/GlobalSurfaceWater", "JRC 全球地表水",
@@ -571,6 +581,18 @@ def mask_clouds(collection, scheme: str, *, keep=SCL_KEEP_DEFAULT):
 # 计算图构建
 # ---------------------------------------------------------------------------
 
+def _apply_band_expr(img, expr: str):
+    """把 spec.band_expr 施加到单幅影像上。
+
+    GEE 的 Image.expression **不会**自动把波段名当变量：裸写 "(B8-B4)/(B8+B4)" 会报
+    "Expression contains undeclared variables: [B4, B8]"（2026-10-11 真实数据运行实测，
+    此前该能力无任何测试/冒烟覆盖）。显式给出「变量名 = 同名单波段图」映射后，表达式
+    里就能直接写波段名 —— spec.band_expr 的文档承诺（如 "(B8-B4)/(B8+B4)"）才真正成立。
+    """
+    names = img.bandNames().getInfo()      # 一次服务端往返，换表达式可用
+    return img.expression(expr, {n: img.select([n]) for n in names})
+
+
 def build_image(spec: ArtifactSpec):
     """
     spec → ee.Image（单景）或 ee.ImageCollection（时序）。
@@ -618,7 +640,13 @@ def build_image(spec: ArtifactSpec):
         # 这些资产在 GEE 里是 ImageCollection，ee.Image(asset) 会报
         # "Asset ... is not an Image"（实测：GLO30 / WorldCover / LC08 都会撞上）。
         # 单景集（WorldCover v200 只有 1 景）走 mosaic，其余给可读的错误。
-        if preset and preset.single_image_asset:
+        if preset and preset.tile_mosaic:
+            # 瓦片集合：先按 AOI 过滤再 mosaic（GLO30 全集 26076 片，不过滤会撞规模上限）
+            col = _asset_collection(ee, preset, spec.asset)
+            if aoi is not None:
+                col = col.filterBounds(aoi)
+            img = col.mosaic()
+        elif preset and preset.single_image_asset:
             img = _asset_collection(ee, preset, spec.asset).mosaic()
         elif preset and preset.collection_only:
             raise SpecError(
@@ -675,7 +703,7 @@ def build_image(spec: ArtifactSpec):
 
     # --- 波段表达式（可选）---
     if spec.band_expr:
-        img = img.expression(spec.band_expr)
+        img = _apply_band_expr(img, spec.band_expr)
 
     # 类型转换**不在这里做**。
     #
@@ -816,7 +844,7 @@ def _cube_period_images(spec: ArtifactSpec) -> list:
             except Exception:
                 pass
         if spec.band_expr:
-            img = img.expression(spec.band_expr)
+            img = _apply_band_expr(img, spec.band_expr)
 
         img = img.set({
             "system:time_start": _iso_to_millis(ps),
