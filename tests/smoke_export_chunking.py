@@ -240,7 +240,8 @@ def stage_a3(args) -> dict:
         root = Path(tmp) / "out"
         with mock.patch.object(emit_mod, "_download", flaky), \
                 mock.patch.object(emit_mod, "DOWNLOAD_BACKOFF_SECONDS", (0.05, 0.05)), \
-                mock.patch.object(emit_mod, "DOWNLOAD_ATTEMPTS", 3):
+                mock.patch.object(emit_mod, "DOWNLOAD_ATTEMPTS", 3), \
+                mock.patch.object(emit_mod, "CHUNK_ATTEMPTS", 1):
             _r, _j, err, dt, lines = run_spec(
                 spec, "file", data_root=root,
                 patches=[(emit_mod, "MAX_DOWNLOAD_BYTES", limit)],
@@ -276,6 +277,50 @@ def stage_a3(args) -> dict:
     for k, v in checks.items():
         print(f"    [{'✓' if v else '✗'}] {k}")
     print(f"[A3] {'✅ PASS' if payload['ok'] else '❌ FAIL'}")
+    return payload
+
+
+def stage_a3b(args) -> dict:
+    """A3 补充：一次性瞬时错误 → 重试后**真的恢复**（重试日志 + 产物落地）。"""
+    spec = p0_spec()
+    limit = 3_000_000
+    real_download = emit_mod._download
+    state = {"injected": 0}
+
+    class RemoteDisconnected(OSError):
+        pass
+
+    def flaky(url, dest, job, **kw):
+        if ".c0003." in str(dest) and state["injected"] == 0:
+            state["injected"] += 1
+            raise RemoteDisconnected("注入一次瞬时断连（A3 补充：重试后恢复）")
+        return real_download(url, dest, job, **kw)
+
+    with tempfile.TemporaryDirectory(prefix="c15a3b_") as tmp:
+        root = Path(tmp) / "out"
+        with mock.patch.object(emit_mod, "_download", flaky), \
+                mock.patch.object(emit_mod, "DOWNLOAD_BACKOFF_SECONDS", (0.2, 0.2)):
+            r, _j, err, dt, lines = run_spec(
+                spec, "file", data_root=root,
+                patches=[(emit_mod, "MAX_DOWNLOAD_BYTES", limit)],
+            )
+        retry_lines = [str(m) for _e, _p, ph, m in lines if ph == "重试"]
+        final_parts = [str(p) for p in Path(root).rglob("*.part*")]
+        payload = {
+            "stage": "a3b", "seconds": round(dt, 1),
+            "injected": state["injected"],
+            "error": str(err)[:300] if err else None,
+            "retry_log_lines": [x[:120] for x in retry_lines],
+            "product": (r or {}).get("path"),
+            "leftover_parts": final_parts,
+            "ok": bool(err is None and r and state["injected"] == 1
+                       and retry_lines and not final_parts),
+        }
+    print(f"[A3b] 注入 1 次瞬时断连 → {'成功恢复' if payload['ok'] else '未恢复'}"
+          f"（重试日志 {len(retry_lines)} 条）")
+    for line in payload["retry_log_lines"][:3]:
+        print("    " + line)
+    print(f"[A3b] {'✅ PASS' if payload['ok'] else '❌ FAIL'}")
     return payload
 
 
@@ -496,7 +541,7 @@ def stage_a1(args) -> dict:
     return payload
 
 
-STAGES = {"a1": stage_a1, "a2": stage_a2, "a3": stage_a3,
+STAGES = {"a1": stage_a1, "a2": stage_a2, "a3": stage_a3, "a3b": stage_a3b,
           "a4": stage_a4, "a5": stage_a5, "a6": stage_a6}
 
 
@@ -505,7 +550,7 @@ def main() -> int:
     ap.add_argument("--stage", required=True,
                     choices=[*STAGES, "quick"])
     args = ap.parse_args()
-    names = ["a2", "a3", "a4", "a5", "a6"] if args.stage == "quick" else [args.stage]
+    names = ["a2", "a3", "a3b", "a4", "a5", "a6"] if args.stage == "quick" else [args.stage]
     all_ok = True
     for name in names:
         payload = STAGES[name](args)

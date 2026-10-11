@@ -52,8 +52,15 @@ MAX_DOWNLOAD_BYTES_PER_PIXEL_BAND = _chunks.BYTES_PER_PIXEL_BAND
 
 # 下载重试（C15 A3）：瞬时错误有界退避。总尝试次数与退避序列显式写死，
 # 不进 spec / 不进指纹（运行时决策，非产品行为）。
-DOWNLOAD_ATTEMPTS = 3
-DOWNLOAD_BACKOFF_SECONDS = (2.0, 5.0)
+# A1 真数据实测：GEE 在长任务里会连发 RemoteDisconnected / SSL EOF / HTTP 503，
+# 3 次尝试不够 —— 提到 5 次、退避拉到 2/5/15/30s。
+DOWNLOAD_ATTEMPTS = 5
+DOWNLOAD_BACKOFF_SECONDS = (2.0, 5.0, 15.0, 30.0)
+
+# 整片重试（外层）：单请求内重试耗尽后，整个分片再来一轮（重新取 URL + 重下）。
+# 进制上界：CHUNK_ATTEMPTS 次整片尝试，耗尽后走 A3 失败文案。
+CHUNK_ATTEMPTS = 3
+CHUNK_BACKOFF_SECONDS = (10.0, 45.0)
 
 # 本地文件瞬时错误重试（C15 实测：刚写下的栅格可能被 AV / 索引扫描短暂锁住，
 # GDAL 报 “Read failed” —— 重试即过）。只包住“回读本地文件”的步骤，
@@ -535,6 +542,48 @@ def _chunk_failure(
     )
 
 
+def _fetch_chunk_with_retry(
+    job: Job, tile: Path, grid: Grid, spec: ArtifactSpec, img, win: dict,
+    *, bands, bpp: int, limit: int, index: int, total: int,
+    chunk_est: int, est_total: int, attempts: int | None, backoff, to_ll,
+) -> None:
+    """
+    单片取数（外层整片重试）：`_fetch_tif` 单请求内已有重试；这里再包一层整片重试
+    （重新取 URL + 重下），只为扛住 GEE 长任务里的连发 503/SSL EOF（A1 实测）。
+    确定性错误不重试；耗尽后原样抛出，由调用方包成 A3 失败文案。
+    """
+    for chunk_try in range(1, max(1, CHUNK_ATTEMPTS) + 1):
+        try:
+            _fetch_tif(
+                job, tile, grid, spec, img,
+                pixels=win["width"] * win["height"], bands=bands,
+                region_override=_region_4326(grid, win, to_ll),
+                max_bytes=limit, bytes_per_band=bpp,
+                attempts=attempts, backoff=backoff,
+            )
+            return
+        except Exception as e:                  # noqa: BLE001 — 分类后决定
+            if chunk_try >= max(1, CHUNK_ATTEMPTS) or not _chunks.is_retryable_error(e):
+                raise
+            delay = CHUNK_BACKOFF_SECONDS[min(chunk_try - 1, len(CHUNK_BACKOFF_SECONDS) - 1)]
+            job.progress(
+                "重试", None,
+                f"第 {index}/{total} 片整体重试（{type(e).__name__}: {str(e)[:80]}），"
+                f"{delay:.0f}s 后重来（单片估算 {chunk_est/1048576:.1f} MB / 上限 "
+                f"{limit/1048576:.0f} MB，整幅 {est_total/1048576:.0f} MB）",
+            )
+            time.sleep(delay)
+
+
+def _to_ll(grid: Grid):
+    """网格 CRS → EPSG:4326 的变换器（region 必须是经纬度几何）。"""
+    from pyproj import CRS, Transformer
+
+    return Transformer.from_crs(
+        CRS.from_user_input(grid.crs), CRS.from_epsg(4326), always_xy=True,
+    )
+
+
 def _download_chunked(
     job: Job,
     out_path: Path,
@@ -551,7 +600,7 @@ def _download_chunked(
     C15 分块下载：目标网格切窗口 → 逐片 getDownloadURL → 本地按**目标网格**拼接。
 
     落盘纪律：整幅写 `<out>.part`，全部成功才原子 rename —— 中途失败不留半截产物，
-    分片临时文件在 finally 里清理。
+    分片临时文件逐片用完即删（长任务不累占临时空间）。
 
     对齐纪律：每片按 GEE **实际返回的 transform** 定位（允许边界余量），
     错位/覆盖不足立即报 ChunkAlignmentError，不重采样、不猜测
@@ -561,7 +610,6 @@ def _download_chunked(
     import rasterio
     from rasterio.transform import Affine
     from rasterio.windows import Window
-    from pyproj import CRS, Transformer
 
     bands = _resolve_bands(spec, bands)
     n_bands = 1 if spec.band_expr else (len(bands) if bands else 1)
@@ -581,9 +629,7 @@ def _download_chunked(
         f" > 直写上限 {limit/1048576:.0f} MB）",
     )
 
-    to_ll = Transformer.from_crs(
-        CRS.from_user_input(grid.crs), CRS.from_epsg(4326), always_xy=True,
-    )
+    to_ll = _to_ll(grid)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     dst_path = out_path.with_suffix(out_path.suffix + ".part")
@@ -596,12 +642,11 @@ def _download_chunked(
             tiles.append(tile)
             chunk_est = _chunks.chunk_request_bytes(win, n_bands, bytes_per_pixel_band=bpp)
             try:
-                _fetch_tif(
-                    job, tile, grid, spec, img,
-                    pixels=win["width"] * win["height"], bands=bands,
-                    region_override=_region_4326(grid, win, to_ll),
-                    max_bytes=limit, bytes_per_band=bpp,
-                    attempts=attempts, backoff=backoff,
+                _fetch_chunk_with_retry(
+                    job, tile, grid, spec, img, win, bands=bands, bpp=bpp,
+                    limit=limit, index=i, total=total, chunk_est=chunk_est,
+                    est_total=est_total, attempts=attempts, backoff=backoff,
+                    to_ll=to_ll,
                 )
             except Exception as e:              # noqa: BLE001 — 统一成 A3 失败文案
                 raise _chunk_failure(
