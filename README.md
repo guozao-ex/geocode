@@ -26,9 +26,10 @@ Layer 4  服务层         HTTP daemon（/mcp + /rpc + /events）+ TUI
 
 ## 状态
 
-P0 完成并实测验收（spec 指纹 `c9243efd`，Sentinel-2 北京真彩色）：
-三出口产物逐像素一致（容差 0.5），QGIS 4.2.2 读回渲染验证通过。
-路线图：P1a arcpy 出版级制图（headless）→ P1b ArcGIS Pro add-in（按需）→ P2 批量导出 → P3 工程化。
+P0 完成并实测验收，路线图 C1–C14 全部交付并归档：
+三出口产物逐像素一致（容差 0.5），QGIS 4.2.2 与 ArcGIS Pro 3.7 双渲染器读回验证通过；
+当代金指纹 `b91c09c9c6451c16`（PROCESSING_VERSION 3，PV bump 与金值登记见开发文档 §9.1）；
+离线层与在线依赖层均已实测（在线层 2026-10-11 联网补跑全部通过）。
 
 ## 快速开始
 
@@ -38,6 +39,7 @@ python -m gis.preflight --network          # 环境探测（6 类失败码 + 可
 python -m gis.daemon                       # HTTP 服务（127.0.0.1:6531）
 python -m gis.tui                          # 终端界面
 PYTHONPATH=. python tests/smoke_three_exits.py
+python tests/verify_all.py                 # 全量自检（仓库根、geo 环境）：离线层自动 RUN，在线层 SKIP 并附单独复跑命令
 ```
 
 复制 `geocode.json` 填入**自己的** GEE project id 与代理设置。

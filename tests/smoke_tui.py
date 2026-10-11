@@ -2,10 +2,17 @@ import asyncio
 import json
 import pathlib
 import re
+import sys
 
 from textual.widgets import DataTable, Static
 
 from gis.tui import GeoCodeTUI
+
+# 报告含中文与 PASS/FAIL 字样：转 UTF-8 输出，避免 GBK 控制台/重定向下写崩
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
 
 # 期望的 GEE 项目从配置读 —— 真实 id 只存在于本地 geocode.json，不入库
 PROJECT = json.loads(
@@ -33,7 +40,13 @@ async def main():
         t = txt(app.query_one("#st-tasks", Static))
         checks.append(("任务汇总行", "共" in t, t.strip()))
         n_before = app.query_one("#jobs", DataTable).row_count
-        checks.append(("任务表有历史", n_before > 0, f"{n_before} 行"))
+        # 不断言「有历史」（全新 daemon 必为 0），改为断言两个视图自洽：
+        # 任务表行数 == 汇总行「共 N」的 N（守护进程只持久化 export 类任务，
+        # emit 等内存任务重启即空——断言大于 0 会让本脚本在干净环境下误报）
+        m_n = re.search(r"共\s*(\d+)", t)
+        summary_n = int(m_n.group(1)) if m_n else -1
+        checks.append(("任务表与汇总行一致", n_before == summary_n,
+                       f"表 {n_before} 行 / 汇总行 共 {summary_n}"))
 
         app.action_describe()
         await asyncio.sleep(11); await pilot.pause(); app.tick(); await pilot.pause()
@@ -56,6 +69,14 @@ async def main():
         say("")
         say("全部日志行：")
         for ln in lines[:0]: pass
+    # 返回失败数：由 __main__ 转成退出码（此前无论成败都返回 0，单独复跑会看不出失败）
+    return sum(1 for _, o, _ in checks if not o)
 
-asyncio.run(main())
-OUT.write_text("\n".join(lines), encoding="utf-8")
+failed = asyncio.run(main())
+report = "\n".join(lines)
+OUT.write_text(report, encoding="utf-8")
+
+# 同时打到 stdout：开发文档里给出的「单独复跑」命令就是本脚本，只落盘会让人以为它没干活
+print(report)
+print(f"（同一份日志已落盘：{OUT}）")
+sys.exit(1 if failed else 0)
