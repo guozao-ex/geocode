@@ -1,0 +1,21 @@
+# Ruff 门禁：只保留「真会咬人」的规则，风格类一律不进。
+#
+# 本仓库的风格是有意保守的 —— 宽 except（网络/可选依赖的降级路径）、子进程手动判
+# returncode、多处 warnings.catch_warnings、以及 sys.path 调整之后的 module-level import。
+# 把它们交给 lint 会制造上百条噪声，并诱导去改本该保持不变的行为。
+#
+# 规则集（逐条说明为什么留）：
+#   E9      语法/运行时类错误
+#   F       pyflakes：未定义名、未用导入/变量、重复定义 —— 经典的「改完忘了删」
+#   B       flake8-bugbear：B023 闭包捕获循环变量、B904 raise 丢异常链、
+#           B905 zip 静默截断、B007 未使用的循环变量
+#   RUF012  可变类属性默认值（实例间共享的陷阱）
+#   SIM115  文件句柄没关。2026-10-11 那次 "Error in sys.excepthook" 空壳噪声，根因正是
+#           rioxarray 数据集没关、退出期才在 GDAL 里析构；这条规则专盯同类残留
+#
+# 用法（零安装，uv 自带缓存）：
+#   uvx ruff@0.17.0 check
+extend-exclude = ["_ref", "_src", "Pro", "data", "logs", ".cache"]
+
+[lint]
+select = ["E9", "F", "B", "RUF012", "SIM115"]

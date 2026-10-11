@@ -34,7 +34,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -94,11 +94,12 @@ def daemon_alive() -> bool:
 
 def start_daemon() -> subprocess.Popen:
     RUN_LOGS.mkdir(parents=True, exist_ok=True)
-    log = open(RUN_LOGS / "daemon.log", "ab")
-    proc = subprocess.Popen(
-        [PY, "-m", "gis.daemon"], cwd=str(ROOT), stdout=log, stderr=log,
-        creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
-    )
+    # Popen 会为子进程复制句柄，父进程这边可立即关：守护进程日志照旧写进同一文件
+    with open(RUN_LOGS / "daemon.log", "ab") as log:
+        proc = subprocess.Popen(
+            [PY, "-m", "gis.daemon"], cwd=str(ROOT), stdout=log, stderr=log,
+            creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+        )
     for _ in range(40):
         if daemon_alive():
             return proc

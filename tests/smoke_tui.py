@@ -68,7 +68,6 @@ async def main():
         say(f"  通过 {sum(1 for _, o, _ in checks if o)}/{len(checks)}")
         say("")
         say("全部日志行：")
-        for ln in lines[:0]: pass
     # 返回失败数：由 __main__ 转成退出码（此前无论成败都返回 0，单独复跑会看不出失败）
     return sum(1 for _, o, _ in checks if not o)
 

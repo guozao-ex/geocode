@@ -9,8 +9,8 @@ osm_boundary_aoi 用假 transport + 内联合成边界响应（非中国）。
 import json
 import pathlib
 import unittest
+from typing import ClassVar
 
-from tests.unit._helpers import make_spec
 
 from gis.aoi import ComplianceError, admin_aoi, osm_boundary_aoi, save_aoi_note
 from gis.grid import compute_grid
@@ -72,7 +72,8 @@ class AdminAoiTest(unittest.TestCase):
 class OsmBoundaryAoiTest(unittest.TestCase):
     """A7/D2：非中国边界可用；country 指向中国即拒绝；时戳走 meta（D4）。"""
 
-    RAW = {
+    # ClassVar 显式声明「共享常量」：默认值可变是类属性的经典陷阱，RUF012 会盯它
+    RAW: ClassVar[dict] = {
         "osm3s": {"timestamp_osm_base": "2026-10-07T08:00:00Z"},
         "elements": [
             {"type": "relation", "id": 9001, "tags": {

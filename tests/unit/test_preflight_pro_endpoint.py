@@ -10,7 +10,6 @@
 只绑定 `127.0.0.1`、端口由内核分配（不占用固定 6530/6531），用例结束即终止子进程释放监听。
 """
 
-import json
 import os
 import subprocess
 import sys

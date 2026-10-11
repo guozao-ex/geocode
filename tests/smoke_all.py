@@ -37,11 +37,12 @@ def daemon_alive() -> bool:
 
 
 def start_daemon() -> subprocess.Popen:
-    log = open(ROOT / "logs" / "smoke_all_daemon.log", "ab")
-    proc = subprocess.Popen(
-        [PY, "-m", "gis.daemon"], cwd=str(ROOT), stdout=log, stderr=log,
-        creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
-    )
+    # Popen 会为自己的子进程复制句柄，父进程这边可以立刻关：日志照旧写进同一文件
+    with open(ROOT / "logs" / "smoke_all_daemon.log", "ab") as log:
+        proc = subprocess.Popen(
+            [PY, "-m", "gis.daemon"], cwd=str(ROOT), stdout=log, stderr=log,
+            creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+        )
     for _ in range(40):
         if daemon_alive():
             return proc

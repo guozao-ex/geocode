@@ -90,7 +90,6 @@ def _build_overlay_sources() -> list[OverlaySpec]:
 
 def _ensure_p0_raster(spec) -> None:
     """P0 缓存缺失时经 GEE 建栅格（A5 的【需网络·仅首轮】部分）。"""
-    from gis.grid import compute_grid
     from gis import geoenv
     out = geoenv.data_path("derived", f"{spec.slug}.{spec.fingerprint()[:8]}.tif")
     if out.exists() and out.stat().st_size > 4096:
@@ -213,8 +212,8 @@ def cmd_mini_three_exits() -> int:
     for ex in ("file", "array", "map"):
         job = Job(id=f"smoke_osm_mini_{ex}", kind="emit", spec=spec, exit=ex,
                   renderer="qgis" if ex == "map" else None)
-        bind_progress(job, lambda ev, p: print(f"  [{ex:5s}][{p.get('pct', 0):5.1f}%] "
-                                               f"{p.get('phase', '')} {p.get('message', '')[:60]}"))
+        bind_progress(job, lambda ev, p, ex=ex: print(f"  [{ex:5s}][{p.get('pct', 0):5.1f}%] "
+                                                     f"{p.get('phase', '')} {p.get('message', '')[:60]}"))
         result = run_emit(job)
         if job.error:
             print(f"{ex} ERROR:")

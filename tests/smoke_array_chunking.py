@@ -32,7 +32,7 @@ except Exception:
 from gis.emit import MAX_DIRECT_PIXELS, emit_array, plan_chunks  # noqa: E402
 from gis.grid import compute_grid  # noqa: E402
 from gis.jobs import Job  # noqa: E402
-from gis.spec import ArtifactSpec, bbox_to_geojson  # noqa: E402
+from gis.spec import ArtifactSpec  # noqa: E402
 from gis import geoenv  # noqa: E402
 from tests.unit._helpers import (  # noqa: E402
     big_chunk_product_name,

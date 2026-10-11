@@ -9,7 +9,6 @@
 - 合规守卫：osm 模块无中国边界查询路径；fixture 无行政边界要素（A7/D2）
 """
 
-import ast
 import json
 import pathlib
 import unittest
@@ -101,7 +100,7 @@ class ParseAssembleTest(unittest.TestCase):
         self.assertGreater(len(gdf), 0)
         # osm id 确定性排序：同类型按 id 升序，类型序 node < way < relation
         keys = [(osm_mod._TYPE_RANK[t], i) for t, i in
-                zip(gdf["osm_type"], gdf["osm_id"])]
+                zip(gdf["osm_type"], gdf["osm_id"], strict=True)]
         self.assertEqual(keys, sorted(keys))
         # 北京水系：闭合 way → Polygon
         ways = gdf[gdf["osm_type"] == "way"]
@@ -188,7 +187,7 @@ class FetchRetryTest(unittest.TestCase):
     def test_retry_on_429_then_success(self):
         tr = _fake_transport(_recorded(), statuses=(429, 200))
         sleeps = []
-        raw = query_osm("q", transport=tr, _sleep=sleeps.append)
+        query_osm("q", transport=tr, _sleep=sleeps.append)
         self.assertEqual(len(tr.calls), 2)
         self.assertEqual(tr.calls[0]["endpoint"], self.EP)
         self.assertEqual(sleeps, [osm_mod._BACKOFF_BASE ** 1])

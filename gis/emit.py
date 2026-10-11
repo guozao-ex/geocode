@@ -1192,7 +1192,7 @@ def _apply_class_palette(data, render) -> "np.ndarray":
     out[...] = base
 
     filled = np.zeros(d.shape, dtype=bool)
-    for v, col in zip(values, cols):
+    for v, col in zip(values, cols, strict=True):
         # 类码是整数；0.5 的容差吸掉浮点噪声，又远小于最小类间距（WorldCover 为 5）
         m = np.isclose(d, v, atol=0.5) & ~filled
         out[m] = col

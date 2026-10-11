@@ -15,8 +15,8 @@
 离线纪律：只读文件，不导入 socket/http/urllib 等（见 `test_offline_guard.py` 的 BANNED 名单）。
 """
 
-import io
 import os
+import pathlib
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -27,7 +27,7 @@ REQUIRED_ARCHIVE_FILES = ("brief.md", "comet-state.yaml", "verification.md")
 
 
 def _read(path: str) -> str:
-    return io.open(path, encoding="utf-8").read()
+    return pathlib.Path(path).read_text(encoding="utf-8")
 
 
 def _published_specs() -> dict:
@@ -95,8 +95,8 @@ class PublishedArchivePairTest(unittest.TestCase):
             if not twins:
                 problems.append(f"{cap}: 归档面无副本")
                 continue
-            data = io.open(path, "rb").read()
-            if not any(io.open(t, "rb").read() == data for t in twins):
+            data = pathlib.Path(path).read_bytes()
+            if not any(pathlib.Path(t).read_bytes() == data for t in twins):
                 problems.append(f"{cap}: 与归档副本内容不一致（{len(twins)} 个副本均不逐字节相同）")
         self.assertFalse(problems, "发布面/归档面不一致：" + "; ".join(problems))
 

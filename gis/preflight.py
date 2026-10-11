@@ -111,7 +111,7 @@ def probe_packages() -> Check:
             {"missing": missing, "present": present},
         )
     optional = {}
-    for mod, pkg in OPTIONAL_PACKAGES.items():
+    for mod, _pkg in OPTIONAL_PACKAGES.items():
         try:
             m = importlib.import_module(mod)
             optional[mod] = getattr(m, "__version__", "?")

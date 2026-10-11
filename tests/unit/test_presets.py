@@ -251,7 +251,7 @@ class NewPresetsTest(unittest.TestCase):
         self.assertIsNone(p.cloud_mask)
         self.assertIsNone(p.reflectance_scale)
         self.assertIsNone(p.band_transforms)         # 分类栅格不做数值缩放
-        self.assertEqual(tuple(zip(p.class_values, p.class_palette, p.class_names)),
+        self.assertEqual(tuple(zip(p.class_values, p.class_palette, p.class_names, strict=True)),
                          WORLDCOVER_GOLDEN)
 
     def test_new_presets_are_collections(self):

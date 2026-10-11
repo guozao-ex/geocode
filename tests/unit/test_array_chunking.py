@@ -21,7 +21,6 @@ import xarray as xr
 
 from gis.emit import (
     ARRAY_PATH_ENV,
-    MAX_DIRECT_PIXELS,
     _ARRAY_BLOCK_BUDGET_BYTES,
     _GEE_REQUEST_BYTE_LIMIT,
     _XEE_DTYPE_BYTES,

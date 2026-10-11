@@ -148,7 +148,7 @@ def act_job_submit(body: dict) -> dict:
     try:
         spec = ArtifactSpec.from_dict(raw_spec) if raw_spec else CURRENT_SPEC
     except Exception as e:
-        raise SpecError(f"spec 解析失败：{e}")
+        raise SpecError(f"spec 解析失败：{e}") from e
 
     if spec is None:
         raise SpecError(

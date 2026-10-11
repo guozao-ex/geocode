@@ -331,7 +331,7 @@ def parse_overpass_response(raw: dict) -> dict:
     "element_count": int}。按 (类型序, osm id) 确定性排序；CRS = EPSG:4326。
     """
     import geopandas as gpd
-    from shapely.geometry import LineString, Point, Polygon
+    from shapely.geometry import Point
 
     elements = raw.get("elements") or []
     ts = (raw.get("osm3s") or {}).get("timestamp_osm_base") or ""
