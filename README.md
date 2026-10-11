@@ -13,6 +13,7 @@ Layer 1  计算图         ee 对象（filter → mask → reduce → clip）   
 Layer 2  产物契约 ★     ArtifactSpec + Grid                       ← 三出口共享
 Layer 3  三出口
          ├─ emit_file  → GeoTIFF / COG      服务「下游接」
+         │              （超 48 MiB 单请求上限时自动分块下载 + 本地拼接，逐像元与直写一致）
          ├─ emit_array → xarray / NetCDF    服务「我算」
          └─ emit_map   → .qgz / .png        服务「人看」
 Layer 4  服务层         HTTP daemon（/mcp + /rpc + /events）+ TUI
@@ -26,7 +27,7 @@ Layer 4  服务层         HTTP daemon（/mcp + /rpc + /events）+ TUI
 
 ## 状态
 
-P0 完成并实测验收，路线图 C1–C14 全部交付并归档：
+P0 完成并实测验收，路线图 C1–C14 全部交付并归档，C15（`export-chunking`：文件出口分块下载 + nodata/输出根/缓存清理）已实现待独立验收：
 三出口产物逐像素一致（容差 0.5），QGIS 4.2.2 与 ArcGIS Pro 3.7 双渲染器读回验证通过；
 当代金指纹 `b91c09c9c6451c16`（PROCESSING_VERSION 3，PV bump 与金值登记见开发文档 §9.1）；
 离线层与在线依赖层均已实测（在线层 2026-10-11 联网补跑全部通过）。
@@ -52,7 +53,7 @@ HTTP 型 server：`http://127.0.0.1:6531/mcp`（initialize → tools/list → to
 
 ## 说明
 
-- 开发文档（完整架构、**17 条踩坑记录**、路线图与进度台账）在 `docs/README.md`，
+- 开发文档（完整架构、**20 条踩坑记录**、路线图与进度台账）在 `docs/README.md`，
   **本地维护、不入库**——所以你在仓库里看不到它。
 - 核心依赖许可：earthengine-api / xee / geedim（Apache-2.0）、geemap（MIT）、
   geopandas（BSD-3）。本项目 License 未定。

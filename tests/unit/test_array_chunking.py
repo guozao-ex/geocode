@@ -219,7 +219,9 @@ class _EndToEndBase(unittest.TestCase):
         self.derived = Path(self._tmp.name)
         self.recorder = _OpenRecorder()
         patchers = [
-            mock.patch("gis.geoenv.DERIVED_DIR", self.derived),
+            # C15 A5：产物根改为 geoenv.data_root()（paths.data_dir 可覆盖）——
+            # 测试改用同一入口重定向到临时目录
+            mock.patch("gis.geoenv.data_root", return_value=self.derived),
             mock.patch("gis.emit.compute_grid", return_value=_grid(860, 784)),
             mock.patch("xarray.open_dataset", self.recorder),
             mock.patch("gis.geoenv.init_ee", return_value=(mock.MagicMock(), {})),
