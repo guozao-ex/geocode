@@ -55,11 +55,11 @@ MAX_DOWNLOAD_BYTES_PER_PIXEL_BAND = _chunks.BYTES_PER_PIXEL_BAND
 DOWNLOAD_ATTEMPTS = 3
 DOWNLOAD_BACKOFF_SECONDS = (2.0, 5.0)
 
-# 本地文件瞬时错误重试（C15 实测：刚写下的栅格会被 AV / 索引扫描短暂锁住，
-# GDAL 报 “Read failed” —— 重试即过；同一现象在真数据并发 I/O 下约 2/6 次复现）。
-# 只包住“回读本地文件”的步骤，不改变任何产物语义。
+# 本地文件瞬时错误重试（C15 实测：刚写下的栅格可能被 AV / 索引扫描短暂锁住，
+# GDAL 报 “Read failed” —— 重试即过）。只包住“回读本地文件”的步骤，
+# 不改变任何产物语义；退避渐进（0.5s → 2s）。
 LOCAL_IO_ATTEMPTS = 3
-LOCAL_IO_DELAY_SECONDS = 0.5
+LOCAL_IO_DELAYS = (0.5, 2.0)
 
 # 波段参数哨兵：单期路径沿用 spec.bands；时序堆叠路径显式传 None
 # （toBands() 后波段名是 期前缀_波段，再传 spec.bands 会 band-not-found）
@@ -233,10 +233,11 @@ def _normalize_nodata(job: Job, path: Path, *, cache_hit: bool = False) -> dict 
         except Exception as e:                 # noqa: BLE001 — 瞬时锁 / GDAL 读错误
             last = e
             if i + 1 < max(1, LOCAL_IO_ATTEMPTS):
+                delay = LOCAL_IO_DELAYS[min(i, len(LOCAL_IO_DELAYS) - 1)]
                 job.progress("重试", None,
                              f"本地回读 {path.name} 失败（{type(e).__name__}: {str(e)[:80]}），"
-                             f"{LOCAL_IO_DELAY_SECONDS}s 后重试")
-                time.sleep(LOCAL_IO_DELAY_SECONDS)
+                             f"{delay}s 后重试")
+                time.sleep(delay)
     if cache_hit:
         job.progress("既有产物 nodata 归一失败", None,
                      f"{path.name}: {type(last).__name__}: {str(last)[:120]}")
@@ -655,12 +656,13 @@ def _download_chunked(
                 except Exception as e:          # noqa: BLE001 — 本地瞬时读锁
                     if io_attempt >= max(1, LOCAL_IO_ATTEMPTS):
                         raise
+                    delay = LOCAL_IO_DELAYS[min(io_attempt - 1, len(LOCAL_IO_DELAYS) - 1)]
                     job.progress(
                         "重试", None,
                         f"第 {i}/{total} 片本地回读失败（{type(e).__name__}: "
-                        f"{str(e)[:80]}），{LOCAL_IO_DELAY_SECONDS}s 后重试",
+                        f"{str(e)[:80]}），{delay}s 后重试",
                     )
-                    time.sleep(LOCAL_IO_DELAY_SECONDS)
+                    time.sleep(delay)
             # 用完即删：分片临时文件不随片数累积（否则大网格长任务会攥出 GB 级临时空间）
             tile.unlink(missing_ok=True)
             tile.with_name(tile.name + ".part").unlink(missing_ok=True)
@@ -952,7 +954,14 @@ def _download(url: str, dest: Path, job: Job, *,
                         job.progress(label, pct, f"{done/1048576:.1f} / {total/1048576:.1f} MB")
                 else:
                     job.progress(label, None, f"{done/1048576:.1f} MB")
-    if dest.stat().st_size < 4096:
+    # ⚠️ C15 实测（A1 第 71/98 片）：连接提前关闭时 `HTTPResponse.read(amt)` 会**静默返回
+    # 空**（不抛 IncompleteRead），于是截断的 GeoTIFF 落到磁盘，直到 GDAL 读它才报
+    # “Read failed”—— 而且回读重试对截断文件永远无效。有 Content-Length 就必须核对。
+    got = dest.stat().st_size
+    if total and got != total:
+        from http.client import IncompleteRead
+        raise IncompleteRead(bytes(got), total - got)
+    if got < 4096:
         head = dest.read_bytes()
         if head.lstrip().startswith((b"{", b"[")):
             raise RuntimeError(
