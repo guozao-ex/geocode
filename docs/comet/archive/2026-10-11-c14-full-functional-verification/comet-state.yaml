@@ -1,0 +1,310 @@
+schema: comet.native.v4
+name: c14-full-functional-verification
+language: zh-CN
+phase: archive
+status: done
+state_version: 11
+brief: brief.md
+document_constraints_version: 3
+shape_confirmation_hash: f284854d176a61627d8ddb486bfd90fbbc17925812d7cfc9c4fb2b5c0e9e5549
+spec_changes:
+  - capability: verify-all
+    operation: create
+    source: specs/verify-all/spec.md
+workspace:
+  isolation: current
+  change_branch: main
+  target_branch: main
+  finish: null
+loop:
+  stage: done
+  goal_cycle: 2
+  iteration: 1
+  attempt: 1
+  retry_epoch: 0
+  failed_iteration_count: 0
+  no_progress_count: 0
+  execution_failure_count: 0
+  previous_unresolved_ids: []
+  next_action: null
+acceptance:
+  - id: A1
+    source: brief.md
+    text: "A1: 在仓库根用 geo 环境 python 执行 `python tests/verify_all.py`，无需任何手工前置步骤（daemon
+      自动检测/启动/停止），全部检查自动执行，任一失败时进程退出码非 0，全部通过（含 SKIP）时为 0。"
+    result: passed
+    reason:
+      text: tests/verify_all.py main() 无任何手工前置：main() 自动 daemon_alive() 检测 6531、无则
+        start_daemon()（独立进程、8s 超时判错）、finally 中仅 terminate 自启 daemon；末尾 return 0
+        if overall=='pass' else 1。Runtime 绑定回执
+        verify-all-full（executable=C:/ProgramData/miniforge3/envs/geo/python.exe,
+        argv=[tests/verify_all.py],
+        cwd=仓库根）status=passed、exit_code=0、duration_ms=30313，与
+        logs/verify_all_report.json（overall=pass, summary 3 PASS/0 FAIL/9
+        SKIP）互证。
+      truncated: false
+  - id: A2
+    source: brief.md
+    text: "A2: 报告含覆盖矩阵：README
+      声明的每个功能模块（契约、三出口、presets、batch、chunking、timeseries、OSM、daemon/MCP/RPC/eve\
+      nts、TUI、arcpy bridge、add-in 探测、preflight、client）至少映射到一项实际执行的检查项（RUN 或
+      SKIP）；未覆盖模块在矩阵中显式标 uncovered，不允许静默缺失。"
+    result: passed
+    reason:
+      text: logs/verify_all_report.json coverage_matrix 含 15 个功能模块（契约层/三出口
+        emit_file/emit_array/emit_map/presets/batch export/array
+        chunking/timeseries/OSM/daemon /mcp /rpc /events/TUI/client/arcpy
+        bridge/add-in 探测/preflight），与 README.md
+        声明的功能面逐一对应，uncovered_modules=[]；抽查映射真实：每个模块至少一项 RUN 或 SKIP 检查项支撑（如
+        daemon=daemon-endpoint-probe pass+smoke-tui skip，add-in 探测=tests-unit
+        pass），矩阵与源码 MATRIX 常量及 build_checks() 一致。
+      truncated: false
+  - id: A3
+    source: brief.md
+    text: "A3: 离线层全自动：tests/unit 全量（≥212
+      用例）、tui-timeseries-probe、daemon-endpoint-probe 全部通过（smoke-array-chunking
+      --stage rescan-big 在前置产物存在时执行），全程不发起外网请求（仅 127.0.0.1 本地回环）。"
+    result: passed
+    reason:
+      text: RUN 层三项全过且留档：logs/verify_all/tests-unit.log 'Ran 254 tests in 19.246s /
+        OK'（≥212），tui-timeseries-probe.log [PASS]，daemon-endpoint-probe.log 11
+        条断言全 PASS（/mcp initialize+tools/list 9 工具齐全、/rpc status、/events SSE
+        hello）。rescan-big 本轮因前置产物缺失归 SKIP（报告 skip_reason
+        有记载）。网络核对：daemon-endpoint-probe 仅构造 http://127.0.0.1:6531 请求且
+        ProxyHandler({}) 禁系统代理，tui 探针走本地 daemon 回环，报告
+        network_allowlist=['127.0.0.1']，无任何外网请求代码路径。
+      truncated: false
+  - id: A4
+    source: brief.md
+    text: "A4:
+      在线依赖检查（smoke_emit、smoke_three_exits、smoke_presets、smoke_timeseries、smoke_\
+      osm 的 Overpass/栅格建源、smoke_map_renderers 当代缓存未命中时、smoke_tui 的 describe 段走
+      GEE REST、smoke-array-chunking-rescan-big 前置产物缺失时）标记 SKIP
+      并注明原因与单独复跑方式，全程不发起任何网络请求，入口无 --online 开关。"
+    result: passed
+    reason:
+      text: 报告含恰好 9 个 SKIP
+        项（smoke-array-chunking-rescan-big、smoke-tui、smoke-emit、smoke-three-exits、smoke-presets、smoke-timeseries、smoke-osm、smoke-map-renderers-qgis/arcpy），每项
+        skip_reason 注明原因且含'单独复跑'指令，与源码 build_checks() 逐项一致（SKIP 项构造后未进入 run_cmd
+        路径，零网络执行）；grep 确认 tests/verify_all.py 无 --online 参数（仅 docstring 说明'不提供
+        --online 开关'）。
+      truncated: false
+  - id: A5
+    source: brief.md
+    text: "A5: JSON 报告落盘 logs/ 下，含每检查项名称/模块/层/状态/耗时/日志路径，失败项含 stdout/stderr
+      摘要；控制台输出等价摘要表。"
+    result: passed
+    reason:
+      text: logs/verify_all_report.json（schema geocode.verify-all.report.v1）落盘且每个检查项含
+        name/module/layer/status/duration_s/log_path/skip_reason/note/fail_summary
+        全部字段；源码 run_cmd() 失败时写 fail_summary（stdout/stderr 尾部各 1200 字符）并落
+        logs/verify_all/<name>.log 完整输出，daemon-endpoint-probe 同样落盘
+        log_path；main() 控制台逐项 [PASS/FAIL/SKIP]+耗时+模块+原因、汇总行、覆盖矩阵摘要与 JSON 同源（同一
+        Check 数据结构驱动）。
+      truncated: false
+  - id: A6
+    source: brief.md
+    text: "A6: 现有 9 个 smoke 与 tests/unit 行为零修改（新入口只做编排与新探针）。"
+    result: passed
+    reason:
+      text: 在仓库根执行 git status --porcelain 仅两条未跟踪新增：docs/comet/changes/（change 正式产物）与
+        tests/verify_all.py（唯一交付物）；git diff --stat 为空，已跟踪文件（含 9 个
+        smoke_*、tests/unit、gis/、README）零修改；源码核对 tui_timeseries_probe 直接复用
+        smoke_all.tui_timeseries_probe 原函数，run_cmd 以子进程原样执行既有 smoke/unit，仅做编排。
+      truncated: false
+  - id: A7
+    source: brief.md
+    text: "A7: 不真实启动 ArcGIS Pro UI；add-in/arcpy 面由 tests/unit
+      断言（test_pro_addin、test_preflight_pro_endpoint 等）覆盖并在矩阵中体现。"
+    result: passed
+    reason:
+      text: grep tests/verify_all.py 无 ArcGIS/ArcGISPro 字样，无任何启动 Pro UI
+        的子进程调用；add-in/arcpy 面由 tests/unit
+        断言覆盖（tests/unit/test_pro_addin.py、tests/unit/test_preflight_pro_endpoint.py
+        均存在且随 tests-unit 254 用例通过），覆盖矩阵中 'add-in
+        探测（端点级）'=tests-unit(pass)、'arcpy bridge（headless
+        出版）'=smoke-map-renderers-arcpy(skip) 如实体现。
+      truncated: false
+builder_handoff:
+  candidate_id: 0b016dbb-77d8-4abd-b947-1d6daff6feba
+  identity_provider: skill-coordinated
+  builder_execution_ref: skill-coordinated:builder:3f2adc89-4125-4390-8c9a-9b700ee34621
+  iteration: 1
+  summary:
+    text: C14 交付 tests/verify_all.py 全量功能自动化验证入口：离线层 RUN（tests-unit 254
+      用例、tui-timeseries-probe、daemon-endpoint-probe 新探针 /mcp+/rpc+/events）+
+      在线依赖层 SKIP（9 项全部注明原因与单独复跑方式，无 --online 开关），daemon 自动起停，退出码语义正确，JSON 报告落盘含
+      15 模块覆盖矩阵（无 uncovered）。Build 期实测发现并按同款语义处理两件事（Decisions D5，已随修正后 Shape
+      重新确认）：smoke_tui 的 describe 段走 GEE REST 非离线安全（转 SKIP，TUI 渲染面由
+      tui-timeseries-probe 离线覆盖）；rescan-big 前置产物缺失（自动转 SKIP，产物生成后自动转 RUN）。既有 9 个
+      smoke 与 tests/unit 零修改（git diff 为空）。第一轮实际运行整体
+      pass（logs/verify_all_report.json）。
+    truncated: false
+  addressed_acceptance_ids:
+    - A1
+    - A2
+    - A3
+    - A4
+    - A5
+    - A6
+    - A7
+  acceptance_review:
+    - id: A1
+      status: implemented-with-evidence
+      evidence:
+        - tests/verify_all.py（入口实现）
+        - logs/verify_all_report.json（overall=pass，summary
+          run=3/passed=3/failed=0/skipped=9）
+        - logs/verify_all/daemon.log + 运行输出「临时 daemon 已停止」（daemon 自动检测/启动/停止）
+      note: 仓库根 geo 环境执行 python tests/verify_all.py 零手工前置跑完全流程；任一 RUN 项失败退出码 1（main()
+        末尾 return 0 if overall=='pass' else 1），本轮全通过退出码 0。
+    - id: A2
+      status: implemented-with-evidence
+      evidence:
+        - logs/verify_all_report.json 的 coverage_matrix（15 个功能模块全部有检查项映射）
+        - 报告字段 uncovered_modules=[]（无静默缺失）
+      note: 矩阵覆盖 README
+        全部功能面：契约层、三出口（file/array/map）、presets、batch、chunking、timeseries、OSM、daemon、TUI、client、arcpy
+        bridge、add-in 探测、preflight；每模块至少一项 RUN 或 SKIP，控制台同步打印矩阵。
+    - id: A3
+      status: implemented-with-evidence
+      evidence:
+        - logs/verify_all/tests-unit.log：Ran 254 tests / OK（≥212）
+        - logs/verify_all/tui-timeseries-probe.log、daemon-endpoint-probe.log：PASS
+        - 报告 network_allowlist=["127.0.0.1"]
+      note: 离线层三项 RUN 全部通过；唯一网络目标是本地回环 6531，全程零外网请求；rescan-big 在前置产物存在时执行（当前缺失按 A4
+        SKIP）。
+    - id: A4
+      status: implemented-with-evidence
+      evidence:
+        - logs/verify_all_report.json 中 9 个 SKIP 检查项各含 skip_reason 与单独复跑方式
+        - tests/verify_all.py 的 build_checks()（SKIP 分类静态表 + rescan-big 前置产物判定）
+      note: smoke_emit/three_exits/presets/timeseries/osm（Overpass+栅格建源）、map_renderers（当代缓存未命中）、smoke_tui（describe
+        段走 GEE REST，D5）、rescan-big（前置产物缺失，D5）全部 SKIP 并注明原因；入口无 --online
+        开关（源码无该参数）。
+    - id: A5
+      status: implemented-with-evidence
+      evidence:
+        - logs/verify_all_report.json：schema=geocode.verify-all.report.v1，checks[]
+          每项含
+          name/module/layer/status/duration_s/log_path/skip_reason/fail_summary
+        - logs/verify_all/*.log 逐检查项日志
+      note: JSON 落盘 logs/verify_all_report.json，控制台摘要与 JSON 同源；失败项附 stdout/stderr
+        尾部摘要（本轮无失败，逻辑由 run_cmd 的 fail_summary 路径实现）。
+    - id: A6
+      status: implemented-with-evidence
+      evidence:
+        - git status --porcelain：仅新增 ?? tests/verify_all.py 与 change 产物目录
+          docs/comet/changes/
+        - git diff --stat 为空（零修改已跟踪文件）
+      note: 既有 9 个 smoke 与 tests/unit 全部零修改；新入口仅编排 + 新增 daemon-endpoint-probe 探针。
+    - id: A7
+      status: implemented-with-evidence
+      evidence:
+        - logs/verify_all/daemon.log 与运行输出：全程仅启动 python -m gis.daemon，无
+          ArcGISPro.exe 进程
+        - tests-unit 内 test_pro_addin/test_preflight_pro_endpoint 覆盖
+          add-in/arcpy 探测面（254 用例 OK）
+      note: 不真实启动 Pro UI；add-in/arcpy 面由 unit 断言承担并在覆盖矩阵（add-in 探测/arcpy bridge 行）体现。
+  checks:
+    - name:
+        text: verify_all 第一轮实际运行（Builder 开发期）
+        truncated: false
+      result: passed
+      note:
+        text: geo 环境 python tests/verify_all.py：RUN 3 PASS / FAIL 0 / SKIP 9，退出码 0，报告
+          logs/verify_all_report.json；期间修复 stdout 包装 GC 关闭底层流、SSE read1 两个实现
+          bug。
+        truncated: false
+  checks_truncated: false
+  known_limits:
+    - text: 在线依赖检查本轮全 SKIP（GEE 像素/认证、Overpass、渲染缓存生成），需联网环境按报告中的单独复跑命令执行
+      truncated: false
+    - text: smoke-array-chunking-rescan-big 前置产物（C6 大网格）缺失，联网跑 --stage big 一次后自动转 RUN
+      truncated: false
+    - text: smoke_tui 的 describe 段依赖 GEE 网络（既有设计），TUI 渲染面由 tui-timeseries-probe 离线覆盖
+      truncated: false
+  known_limits_truncated: false
+  review: null
+  submitted_at: 2026-10-11T02:44:33.892Z
+blockers: []
+verification:
+  candidate_id: 0b016dbb-77d8-4abd-b947-1d6daff6feba
+  identity_provider: skill-coordinated
+  verifier_execution_ref: skill-coordinated:verifier:c3105348-3fab-4017-8291-b801f4e3d482
+  iteration: 1
+  attempt: 1
+  assurance: skill-coordinated
+  verdict: pass
+  checks:
+    - id: verify-all-full
+      name:
+        text: verify-all 离线全量复跑
+        truncated: false
+      argv_display:
+        - text: tests/verify_all.py
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 30313
+  summary:
+    text: 独立 Verifier 核对 c14-full-functional-verification 全部 7 项验收：全部通过。交付物
+      tests/verify_all.py 为唯一新增文件，编排离线层 RUN（tests-unit 254
+      用例、tui-timeseries-probe、daemon-endpoint-probe 新探针）+ 在线依赖层 9 项
+      SKIP（各含原因与单独复跑方式，无 --online 开关），daemon 自动检测/启动/停止，退出码语义正确（Runtime 回执
+      verify-all-full exit_code=0，duration_ms=30313），JSON 报告落盘含 15 模块覆盖矩阵且
+      uncovered_modules=[]，既有 smoke/unit 零修改（git diff 为空），无 ArcGIS Pro UI
+      启动路径。verdict=pass。
+    truncated: false
+  risks:
+    - text: 本轮在线依赖检查全部 SKIP（GEE 像素/认证、Overpass、渲染缓存生成），需联网环境按报告各 skip_reason
+        中的单独复跑命令执行；rescan-big 需先联网跑 --stage big 生成
+        data/derived/s2_chunking_big_smoke.9d517910.nc 后自动转 RUN
+      truncated: false
+    - text: logs/verify_all/ 下残留 Builder
+        开发期两个历史失败日志（smoke-array-chunking-rescan-big.log、smoke-tui.log），当前报告已将两项归
+        SKIP 且 log_path=null，与报告无矛盾，仅磁盘遗留
+      truncated: false
+  risks_truncated: false
+  completed_at: 2026-10-11T02:49:22.051Z
+history:
+  - goal_cycle: 1
+    iteration: 1
+    attempt: 0
+    outcome: recovery
+    unresolved_ids: []
+    summary:
+      text: Native confirmed acceptance criteria changed
+      truncated: false
+    completed_at: 2026-10-11T02:22:05.615Z
+  - goal_cycle: 2
+    iteration: 1
+    attempt: 1
+    outcome: pass
+    unresolved_ids: []
+    summary:
+      text: 独立 Verifier 核对 c14-full-functional-verification 全部 7 项验收：全部通过。交付物
+        tests/verify_all.py 为唯一新增文件，编排离线层 RUN（tests-unit 254
+        用例、tui-timeseries-probe、daemon-endpoint-probe 新探针）+ 在线依赖层 9 项
+        SKIP（各含原因与单独复跑方式，无 --online 开关），daemon 自动检测/启动/停止，退出码语义正确（Runtime 回执
+        verify-all-full exit_code=0，duration_ms=30313），JSON 报告落盘含 15 模块覆盖矩阵且
+        uncovered_modules=[]，既有 smoke/unit 零修改（git diff 为空），无 ArcGIS Pro UI
+        启动路径。verdict=pass。
+      truncated: false
+    completed_at: 2026-10-11T02:49:22.051Z
+history_overflow:
+  dropped_entries: 0
+  first_dropped_at: null
+  last_dropped_at: null
+  outcome_counts:
+    pass: 0
+    fail: 0
+    blocked: 0
+    execution-error: 0
+    recovery: 0
+verification_result: pass
+verification_report: verification.md
+archived: true
+created_at: 2026-10-11T01:59:52.059Z
