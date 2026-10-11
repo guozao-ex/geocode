@@ -89,3 +89,39 @@ def make_p0_spec(**over) -> ArtifactSpec:
     kw = dict(P0_SPEC_DICT)
     kw.update(over)
     return ArtifactSpec.from_dict(kw)
+
+
+# C6 大网格分块 smoke 的 spec（约 82km×82km @10m，est ≥ 64M 像素 → 走 chunked 路径）。
+# 单一事实源：smoke_array_chunking.py 的 stage_big / stage_rescan_big 与 verify_all.py
+# 的前置产物判据全部从这里取值，**不得在别处硬编码产物名**——指纹进产物名，PV bump
+# 就会改名：本 spec 在 PV2 时代是 `9d517910`，C4（PV 2→3）后变成 `2965c18a`，而 C6
+# 把 `9d517910` 写死在 stage_rescan_big 与 verify_all 里，PV bump 后 rescan-big
+# 恒判「产物不存在」（C13 发布面规范 3 同一类陷阱；2026-10-11 C14 在线层补跑时发现）。
+BIG_CHUNK_SPEC_DICT = {
+    "id": "s2_chunking_big_smoke",
+    "asset": "COPERNICUS/S2_SR_HARMONIZED",
+    "bands": ["B4", "B3", "B2"],
+    "scale": 10,
+    "crs": "EPSG:32650",
+    "dtype": "uint16",
+    "time_range": ["2024-06-01", "2024-06-15"],
+    "reducer": "median",
+    "aoi": bbox_to_geojson(116.10, 39.60, 117.06, 40.34),
+}
+
+
+def make_big_chunk_spec() -> ArtifactSpec:
+    """C6 大网格分块 smoke 的 spec（指纹随 PV 时代取值）。"""
+    return ArtifactSpec.from_dict(dict(BIG_CHUNK_SPEC_DICT))
+
+
+def big_chunk_product_name(ext: str = "nc") -> str:
+    """大网格分块产物文件名 `<slug>.<指纹8位>.<ext>`（跨时代安全，不硬编码历史常量）。"""
+    spec = make_big_chunk_spec()
+    return f"{spec.slug}.{spec.fingerprint()[:8]}.{ext}"
+
+
+def p0_product_name(ext: str = "tif") -> str:
+    """P0 样本产物文件名 `<slug>.<指纹8位>.<ext>`（同理随 PV 时代取值）。"""
+    spec = make_p0_spec()
+    return f"{spec.slug}.{spec.fingerprint()[:8]}.{ext}"

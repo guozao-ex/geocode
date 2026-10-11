@@ -61,6 +61,28 @@ FAIL_TAIL = 1200  # 失败摘要截断长度，与 smoke_all 同口径
 
 
 # ---------------------------------------------------------------------------
+# 前置产物的当代文件名（单一事实源：tests/unit/_helpers.py）
+#
+# 指纹进产物名（<slug>.<指纹8位>.<ext>），PROCESSING_VERSION bump 就会改名；这里
+# 统一从 _helpers 推导，**不硬编码某个时代的常量**。C6 曾把大网格产物名写死为
+# 9d517910（PV2 时代值），C4 bump 2→3 后本入口的 rescan-big 恒判「产物不存在」；
+# 2026-10-11 在线层补跑时发现并纠正（与 C13 发布面规范 3 同一类陷阱）。
+# ---------------------------------------------------------------------------
+
+def _era_product_name(kind: str, ext: str) -> str | None:
+    """按当代 PV 推出产物文件名；推导失败返回 None（调用侧退化为不含文件名的文案）。"""
+    try:
+        if str(ROOT) not in sys.path:
+            # 本脚本以 `python tests/verify_all.py` 运行：sys.path[0] 是 tests/，ROOT 不在其中
+            sys.path.insert(0, str(ROOT))
+        from tests.unit._helpers import big_chunk_product_name, p0_product_name
+
+        return big_chunk_product_name(ext) if kind == "big_chunk" else p0_product_name(ext)
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
 # daemon 生命周期（与 smoke_all 同款模式：检测 6531，没有就起一个，用完即停）
 # ---------------------------------------------------------------------------
 
@@ -107,7 +129,10 @@ def run_cmd(check: Check, args: list[str], timeout: int = 900) -> Check:
     t0 = time.time()
     RUN_LOGS.mkdir(parents=True, exist_ok=True)
     log_path = RUN_LOGS / f"{check.name}.log"
-    env = dict(os.environ, PYTHONPATH=str(ROOT), IO_ENCODING="utf-8")
+    # 子进程 stdout 重定向为管道后仍按 locale encoding 写出（Windows 默认 cp936）；
+    # 这里统一强制 UTF-8，与下面的 encoding="utf-8" 解码侧对齐。
+    # （历史上写作 IO_ENCODING —— 不是 Python 认的变量名，等于没设。）
+    env = dict(os.environ, PYTHONPATH=str(ROOT), PYTHONIOENCODING="utf-8")
     try:
         proc = subprocess.run(
             [PY, *args], cwd=str(ROOT), env=env,
@@ -279,13 +304,14 @@ def build_checks() -> list[Check]:
     checks.append(C("daemon-endpoint-probe", "daemon（/mcp /rpc /events）"))
 
     # rescan-big：前置产物存在才 RUN，缺失则 SKIP（与 map_renderers 缓存未命中同款语义）
-    big_artifact = ROOT / "data" / "derived" / "s2_chunking_big_smoke.9d517910.nc"
+    big_name = _era_product_name("big_chunk", "nc") or "s2_chunking_big_smoke.<指纹8位>.nc"
+    big_artifact = ROOT / "data" / "derived" / big_name
     if big_artifact.exists():
         checks.append(C("smoke-array-chunking-rescan-big", "array chunking"))
     else:
         checks.append(skip_check(
             Check("smoke-array-chunking-rescan-big", "array chunking", "skip"),
-            "前置产物缺失：C6 大网格产物 data/derived/s2_chunking_big_smoke.9d517910.nc "
+            f"前置产物缺失：C6 大网格产物 data/derived/{big_name} "
             "不在主工作区（worktree 时代产物，未入库）；chunking 单元面已由 tests-unit 的 "
             "test_array_chunking 离线覆盖；单独复跑：联网环境先 PYTHONPATH=. python "
             "tests/smoke_array_chunking.py --stage big 生成产物，之后本项自动转 RUN"))
@@ -314,9 +340,17 @@ def build_checks() -> list[Check]:
                              "Overpass API 需网络（经 geocode.json 代理），首轮栅格建源经 GEE；"
                              "单元面已由 tests-unit 的 test_osm/test_aoi 离线覆盖；"
                              "单独复跑：联网环境 PYTHONPATH=. python tests/smoke_osm.py <cmd>"))
-    cache_note = ("当代 PV 下 _ensure_raster 缓存未命中（data/derived/s2_beijing_test.b91c09c9.tif 不存在），"
-                  "直接跑会走联网路径生成缓存；联网跑通一次后可离线复跑。"
-                  "渲染 spec 结构面已由 tests-unit 的 test_layout_spec/test_overlay_spec 离线覆盖")
+    p0_tif = _era_product_name("p0", "tif") or "s2_beijing_test.<指纹8位>.tif"
+    # SKIP 文案必须写实：缓存已在盘时不得再声称「未命中」
+    if (ROOT / "data" / "derived" / p0_tif).exists():
+        cache_note = (f"缓存已命中（data/derived/{p0_tif} 在盘），本项可离线复跑；"
+                      "本入口 RUN 层按 C14 验收范围维持 tests-unit / tui-timeseries-probe / "
+                      "daemon-endpoint-probe（＋前置产物存在时的 rescan-big），渲染面未入层。"
+                      "单独复跑：PYTHONPATH=. python tests/smoke_map_renderers.py qgis|arcpy")
+    else:
+        cache_note = (f"当代 PV 下 _ensure_raster 缓存未命中（data/derived/{p0_tif} 不存在），"
+                      "直接跑会走联网路径生成缓存；联网跑通一次后可离线复跑。"
+                      "渲染 spec 结构面已由 tests-unit 的 test_layout_spec/test_overlay_spec 离线覆盖")
     checks.append(skip_check(Check("smoke-map-renderers-qgis", "三出口 emit_map（.qgz/.png 渲染）", "skip"),
                              cache_note, note="QGIS 渲染器"))
     checks.append(skip_check(Check("smoke-map-renderers-arcpy", "三出口 emit_map（.qgz/.png 渲染）", "skip"),

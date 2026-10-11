@@ -21,12 +21,24 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+# 本脚本会打印 ≫ / ≪ / ✅ / ❌ 等非 GBK 字符。控制台或重定向到文件时 stdout 仍是
+# cp936（Windows 默认 locale encoding）时会直接 UnicodeEncodeError 崩掉，
+# 与 smoke_presets / smoke_map_renderers 同款守卫（2026-10-11 在 GBK 环境首次暴露）。
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 from gis.emit import MAX_DIRECT_PIXELS, emit_array, plan_chunks  # noqa: E402
 from gis.grid import compute_grid  # noqa: E402
 from gis.jobs import Job  # noqa: E402
 from gis.spec import ArtifactSpec, bbox_to_geojson  # noqa: E402
 from gis import geoenv  # noqa: E402
-from tests.unit._helpers import expected_p0_fingerprint  # noqa: E402  （金指纹单一事实源，按 PV 时代取值）
+from tests.unit._helpers import (  # noqa: E402
+    big_chunk_product_name,
+    expected_p0_fingerprint,  # 金指纹单一事实源，按 PV 时代取值
+    make_big_chunk_spec,
+)
 
 
 class ProgressCollector:
@@ -211,17 +223,7 @@ class _MemorySampler:
 
 def stage_big() -> int:
     print("=== 阶段2：大网格 smoke（≈82km×82km @10m 单期，est≫64M）===")
-    spec = ArtifactSpec.from_dict({
-        "id": "s2_chunking_big_smoke",
-        "asset": "COPERNICUS/S2_SR_HARMONIZED",
-        "bands": ["B4", "B3", "B2"],
-        "scale": 10,
-        "crs": "EPSG:32650",
-        "dtype": "uint16",
-        "time_range": ["2024-06-01", "2024-06-15"],
-        "reducer": "median",
-        "aoi": bbox_to_geojson(116.10, 39.60, 117.06, 40.34),
-    })
+    spec = make_big_chunk_spec()
     grid = compute_grid(spec)
     est = grid.width * grid.height * 3
     expected_chunks = plan_chunks(grid.width, grid.height, 1, 3)
@@ -305,7 +307,9 @@ def stage_rescan_big() -> int:
     import netCDF4 as nc
 
     print("=== 阶段rescan-big：对已有大网格产物离线重扫描（无网络）===")
-    product = geoenv.data_path("derived", "s2_chunking_big_smoke.9d517910.nc")
+    # 产物名随 PV 时代取值（单一事实源 tests/unit/_helpers.py）：不得硬编码历史指纹。
+    # C6 曾写死 PV2 时代的 9d517910，C4（PV 2→3）后本 stage 恒 FAIL。
+    product = geoenv.data_path("derived", big_chunk_product_name())
     if not Path(product).exists():
         print("FAIL: 产物不存在", product)
         return 1

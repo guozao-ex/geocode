@@ -51,7 +51,10 @@ def start_daemon() -> subprocess.Popen:
 
 
 def run(name: str, args: list[str]) -> bool:
-    env = dict(os.environ, PYTHONPATH=str(ROOT), IO_ENCODING="utf-8")
+    # 子进程 stdout 走管道时仍按 locale encoding 写出（Windows 默认 cp936）；
+    # 强制 UTF-8，与下面的 encoding="utf-8" 解码侧对齐。
+    # （历史上写作 IO_ENCODING —— 不是 Python 认的变量名，等于没设。）
+    env = dict(os.environ, PYTHONPATH=str(ROOT), PYTHONIOENCODING="utf-8")
     t0 = time.time()
     proc = subprocess.run(
         [PY, *args], cwd=str(ROOT), env=env,
