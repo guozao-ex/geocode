@@ -1084,19 +1084,40 @@ def _render_png(spec: ArtifactSpec, raster: Path, grid: Grid, job: Job) -> Path:
 
     if len(picks) >= 3:
         channels = [_stretch(da.isel(band=i).values, render) for i in picks]
-        rgb8 = (np.stack(channels, axis=-1) * 255.0).astype("uint8")
+        rgb8 = _bake_uint8(np.stack(channels, axis=-1) * 255.0)
     else:
-        rgb8 = (_single_band_rgb(da.isel(band=(picks[0] if picks else 0)).values, render)
-                * 255.0).astype("uint8")
+        rgb8 = _bake_uint8(
+            _single_band_rgb(da.isel(band=(picks[0] if picks else 0)).values, render) * 255.0
+        )
+    # 烘焙完立即释放底层 rasterio/GDAL 数据集：留到 GC 或解释器退出期再析构，GDAL 在
+    # finalization 阶段会抛异常，表现为「跑成功但 stderr 打出 Error in sys.excepthook」
+    da.close()
 
     _write_geopng(out, rgb8, grid, spec)
     job.progress("渲染预览图", 92, f"{out.name} ({out.stat().st_size/1024:.0f} KB)")
     return out
 
 
+def _bake_uint8(rgb: "np.ndarray") -> "np.ndarray":
+    """
+    显示用 8bit 转换：非有限值（掩膜/NaN）显式归零后取整。
+
+    `astype("uint8")` 对 NaN 的结果是未定义的，且每次都会打
+    "RuntimeWarning: invalid value encountered in cast"，污染成功路径的 stderr。
+    显式归零后产物确定；源数据侧仍保留 NaN，掩膜语义不变。
+    """
+    import numpy as np
+
+    return np.where(np.isfinite(rgb), rgb, 0.0).astype("uint8")
+
+
 def _write_geopng(path: Path, rgb8: "np.ndarray", grid: Grid, spec: ArtifactSpec) -> None:
     """用 GDAL 写 PNG，并把 geotransform + CRS 嵌进去。"""
     from osgeo import gdal, osr
+
+    # 显式声明沿用 GDAL 的「返回码/None」语义：GDAL 4.0 默认改为抛异常，不声明既会
+    # 改变既有错误分支行为，也会在首次调用时打 FutureWarning 污染成功路径的 stderr
+    gdal.DontUseExceptions()
 
     h, w = rgb8.shape[0], rgb8.shape[1]
     drv = gdal.GetDriverByName("MEM")
@@ -1356,10 +1377,13 @@ def write_visual_rgb(spec: ArtifactSpec, raster: Path, grid: Grid) -> Path:
 
     if len(picks) >= 3:
         ch = [_stretch(src.isel(band=i).values, render) for i in picks]
-        rgb8 = (np.stack(ch, axis=-1) * 255.0).astype("uint8")
+        rgb8 = _bake_uint8(np.stack(ch, axis=-1) * 255.0)
     else:
-        rgb8 = (_single_band_rgb(src.isel(band=(picks[0] if picks else 0)).values, render)
-                * 255.0).astype("uint8")
+        rgb8 = _bake_uint8(
+            _single_band_rgb(src.isel(band=(picks[0] if picks else 0)).values, render) * 255.0
+        )
+    # 烘焙完立即释放底层数据集（同上：退出期析构会在 GDAL 侧抛异常）
+    src.close()
 
     out = _output_path(spec, "deliver", VISUAL_SUFFIX)
     out.parent.mkdir(parents=True, exist_ok=True)

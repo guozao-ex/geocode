@@ -123,6 +123,9 @@ def probe_packages() -> Check:
 def probe_gdal() -> Check:
     try:
         from osgeo import gdal
+
+        # 显式声明沿用返回码语义（GDAL 4.0 默认反转）；避免首次调用时打 FutureWarning
+        gdal.DontUseExceptions()
     except Exception:
         band = geoenv.gdal_bin()
         return Check(
