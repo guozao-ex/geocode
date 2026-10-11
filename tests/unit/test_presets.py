@@ -19,6 +19,7 @@ from unittest import mock
 from gis import source
 from gis import spec as spec_module
 from gis.spec import PROCESSING_VERSION, ArtifactSpec, RenderSpec, SpecError, bbox_to_geojson
+from tests.unit._helpers import GOLDEN_FINGERPRINTS, expected_p0_fingerprint
 
 AOI = bbox_to_geojson(116.30, 39.95, 116.40, 40.02)
 
@@ -26,8 +27,8 @@ AOI = bbox_to_geojson(116.30, 39.95, 116.40, 40.02)
 # 改变了像素输出 ⇒ 红线 3 要求 PROCESSING_VERSION 2 → 3 ⇒ 金值随之更新。
 # 旧金值 c9243efd40318c85 已作废，但它仍是"未受影响的既有预设语义不变"的对照基准——
 # 把版本号替换回 2 后必须复现旧值（见 LegacyPresetsFrozenTest.test_change_surface_is_version_only）。
-P0_GOLDEN_FINGERPRINT = "b91c09c9c6451c16"
-P0_GOLDEN_FINGERPRINT_VERSION_2 = "c9243efd40318c85"
+P0_GOLDEN_FINGERPRINT = expected_p0_fingerprint()
+P0_GOLDEN_FINGERPRINT_VERSION_2 = GOLDEN_FINGERPRINTS[2]
 
 # P0 验收样本的参数（tests/smoke_emit.py 原样：小框 AOI + uint16 + 2024 夏季中值）。
 P0_SPEC_DICT = {
