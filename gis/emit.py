@@ -483,6 +483,21 @@ def _region_4326(grid: Grid, window: dict, to_ll) -> dict:
     }
 
 
+def _image_band_names(img) -> list[str]:
+    """影像的显式波段名（掩膜带必须按名字附加；一次 EE 往返）。"""
+    return [str(n) for n in (img.bandNames().getInfo() or [])]
+
+
+def _request_bytes_per_band(img, bands) -> int:
+    """
+    单请求计费：值波段（输出 dtype + 1 B mask）+ 逐波段 byte 掩膜带（1 B + 1 B mask）。
+
+    C15 A1 追加：下载请求现在同时带掩膜带（见 export_chunks.MASK_BAND_BYTES_PER_BAND），
+    分块预算必须把它算进去 —— 否则分片会超 GEE 的 48 MiB 上限（实测直接 400）。
+    """
+    return _image_bytes_per_band(img, bands) + _chunks.MASK_BAND_BYTES_PER_BAND
+
+
 def _resolve_bands(spec: ArtifactSpec, bands) -> list[str] | None:
     """把 bands 参数（含 `_SPEC_BANDS` 哨兵）解析成实际要请求的波段列表 / None。
 
@@ -612,8 +627,10 @@ def _download_chunked(
     from rasterio.windows import Window
 
     bands = _resolve_bands(spec, bands)
-    n_bands = 1 if spec.band_expr else (len(bands) if bands else 1)
-    bpp = int(bytes_per_band) if bytes_per_band else _image_bytes_per_band(img, bands)
+    if bands is None:
+        bands = _image_band_names(img)
+    n_bands = len(bands)
+    bpp = int(bytes_per_band) if bytes_per_band else _request_bytes_per_band(img, bands)
 
     windows = _chunks.plan_download_chunks(
         grid.width, grid.height, n_bands,
@@ -625,7 +642,7 @@ def _download_chunked(
     job.progress(
         "分块下载", 12,
         f"{grid.width}×{grid.height} @ {grid.scale}m → {total} 片"
-        f"（{n_bands} 波段 × {bpp} B/像素计费，估算 {est_total/1048576:.0f} MB"
+        f"（{n_bands} 波段 × {bpp} B/像素计费（含掩膜带），估算 {est_total/1048576:.0f} MB"
         f" > 直写上限 {limit/1048576:.0f} MB）",
     )
 
@@ -768,10 +785,13 @@ def _fetch_tif(
     `region_override`（片窗口）与 `max_bytes`（单片预算），不再递归分块。
     """
     est = pixels if pixels is not None else grid.width * grid.height
-    # 波段选择与计费口径（band_expr 之后影像只剩表达式产出的波段）
+    # 波段选择与计费口径（band_expr / bands=None 也要落到**显式波段名**：
+    # 掩膜带必须按名字附加，不能再走「不传 bands 吃全部波段」）
     band_sel = _resolve_bands(spec, bands)
-    n_bands_est = 1 if spec.band_expr else (len(band_sel) if band_sel else 1)
-    bpp = int(bytes_per_band) if bytes_per_band else _image_bytes_per_band(img, band_sel)
+    if band_sel is None:
+        band_sel = _image_band_names(img)
+    n_bands_est = len(band_sel)
+    bpp = int(bytes_per_band) if bytes_per_band else _request_bytes_per_band(img, band_sel)
     limit = int(MAX_DOWNLOAD_BYTES if max_bytes is None else max_bytes)
     est_download = est * n_bands_est * bpp
 
@@ -803,7 +823,7 @@ def _fetch_tif(
         raise ValueError(
             f"下载体积估算 {est_download/1048576:.1f} MB 超单请求上限 "
             f"{limit/1048576:.1f} MB"
-            f"（{grid.width}×{grid.height} × {n_bands_est} 波段 × {bpp} B/像素）。\n"
+            f"（{grid.width}×{grid.height} × {n_bands_est} 波段 × {bpp} B/像素（含掩膜带））。\n"
             f"  出路（按省事排序）：\n"
             f"    1. 放大 scale（当前 {spec.scale}m；放大一倍，体积降到 1/4）\n"
             f"    2. 缩小 AOI（按区县切分，产物本地拼接）\n"
@@ -822,6 +842,14 @@ def _fetch_tif(
             "spec.aoi 为空，无法构造下载 region。\n"
             "  getDownloadURL 需要 EPSG:4326 的 (west, south, east, north)。"
         )
+    # C15 A1 追加：值波段 + 逐波段 byte 掩膜带同请求下载（同一趟）。
+    # 掩膜带是「真值 0 vs 哨兵 0」的唯一可靠区分来源（单波段 float64 尤其）。
+    # ⚠️ 必须 `gt(0).byte()` 而不是 `byte()`：AOI 边界的**半覆盖像素**掩膜是小数
+    # （如 0.5），直接转 byte 会截断成 0 而误抹（A4 实测多抹 1215 px）。
+    mask_names = [_chunks.mask_band_name(b) for b in band_sel]
+    value_sel = img.select(list(band_sel))
+    msk = value_sel.mask()
+    req_img = value_sel.addBands(msk.gt(0).byte().rename(mask_names))
     params = {
         "name": spec.slug,
         "scale": grid.scale,
@@ -829,13 +857,12 @@ def _fetch_tif(
         "region": region,                     # 经纬度 bbox
         "format": "GEO_TIFF",
         "filePerBand": False,
+        "bands": list(band_sel) + mask_names,
     }
-    if band_sel:
-        params["bands"] = list(band_sel)
     job.check_cancelled()
 
     url, n_url_retries = _retry(
-        lambda: img.getDownloadURL(params), job=job, label="申请下载链接",
+        lambda: req_img.getDownloadURL(params), job=job, label="申请下载链接",
         attempts=attempts, backoff=backoff,
     )
     if n_url_retries:
@@ -852,8 +879,10 @@ def _fetch_tif(
         _retry(lambda: _download(url, tmp, job), job=job, label="下载",
                attempts=attempts, backoff=backoff)
         job.check_cancelled()
-        # C15 A4：nodata 语义统一成 NaN —— 在 .part 上做，rename 即“发布”
-        _normalize_nodata(job, tmp)
+        # C15 A1 追加：用**真实掩膜带**定 NaN 并丢弃掩膜带（比哨兵猜测可靠：
+        # 单波段 float64 的哨兵 0.0 与真值 0 在 TIFF 里无法区分）。
+        # 在 .part 上做，rename 即“发布”。
+        _chunks.collapse_mask_bands(tmp, n_bands_est)
         tmp.replace(out_path)
     except BaseException:
         tmp.unlink(missing_ok=True)

@@ -59,6 +59,19 @@ def bytes_per_pixel_band(precision: str | None) -> int:
 
 # 每片额外多请的像素余量（单边）：region 外扩 1 px + GEE 把 region 边界向外
 # 吸附到 scale 整数倍时最多再多 1 px。两者都只影响请求体积，不进入产物。
+# C15 A1 追加（2026-10-14）：下载时给每个值波段附加一个 byte 掩膜波段。
+# 为什么：GEO_TIFF 只用**文件级 nodata** 表达无数据（float32 → -inf；float64 → 0.0），
+# 真值恰好等于哨兵的像素会被误抹（泰安真彩色 B2 实测 7/165.4M）。多波段可用
+# 「全波段哨兵」判据规避，但**单波段 float64 无法区分** —— 唯一可靠来源是 GEE 掩膜。
+# 计费：byte 掩膜带 = 1 B 数据 + 1 B mask = 2 B/像素/波段（请求体积 +2 B/px/波段）。
+MASK_BAND_BYTES_PER_BAND = 2
+
+
+def mask_band_name(band: str) -> str:
+    """给 `band` 附加的掩膜波段名（EE 波段名必须以字母开头，不能以下划线开头）。"""
+    return f"mask_{band}"
+
+
 CHUNK_MARGIN_PIXELS = 1      # region 外扩（覆盖保险）
 CHUNK_SNAP_PIXELS = 1        # GEE 向外吸附（SnapOut）最多 1 px
 
@@ -365,6 +378,86 @@ def is_retryable_error(exc: BaseException | None) -> bool:
 # ---------------------------------------------------------------------------
 # IO 层
 # ---------------------------------------------------------------------------
+
+def apply_masks_to_values(values, masks):
+    """
+    用**逐波段真实掩膜**把无数据像素归一为 `NaN`（C15 A1 追加）。
+
+    `values` 与 `masks` 形状相同（逐波段配对）。掩膜非正（0 / 负 / NaN）或值非有限 → NaN；
+    掩膜为 1 的像素**即使是真值 0 也保留** —— 这正是哨兵判据会误抹的那一格。
+    """
+    import numpy as np
+
+    v = np.asarray(values)
+    if not np.issubdtype(v.dtype, np.floating):
+        v = v.astype("float32")
+    m = np.asarray(masks)
+    invalid = (~np.isfinite(v)) | (~(m > 0))
+    if invalid.any():
+        v = v.copy()
+        v[invalid] = np.nan
+    return v
+
+
+def collapse_mask_bands(path: Path, n_value_bands: int, *,
+                        target_bytes: int = 64 * 1024 * 1024) -> dict:
+    """
+    把「n 个值波段 + 紧随其后的 n 个掩膜波段」的下载件重写成**纯值产物**：
+    掩膜为 0 处 → NaN，丢弃掩膜波段，nodata 声明为 NaN（同目录 .part + 原子替换）。
+
+    只在下载路径调用（`emit._fetch_tif`）；缓存命中的历史产物归一仍走
+    `normalize_nodata_to_nan`（哨兵判据）。波段数不符直接报错，不静默退回猜测。
+    """
+    import numpy as np
+    import rasterio
+    from rasterio.windows import Window
+
+    path = Path(path)
+    n = int(n_value_bands)
+    with rasterio.open(path) as ds:
+        if ds.count != 2 * n:
+            raise ValueError(
+                f"下载件波段数不符：期望 {2 * n}（{n} 值 + {n} 掩膜），实际 {ds.count}。\n"
+                "  GEE 没按请求返回掩膜波段 —— 不要退回哨兵猜测，先查请求构造。"
+            )
+        profile = ds.profile.copy()
+        dtype = ds.dtypes[0]
+        width, height, count = ds.width, ds.height, ds.count
+        descriptions = list(ds.descriptions or ())[:n]
+        tags = dict(ds.tags())
+        band_tags = [dict(ds.tags(i)) for i in range(1, n + 1)]
+
+    # 行块按「值 + 掩膜」双向字节量反解，单次读取有界
+    per_row = max(1, width * count * np.dtype(dtype).itemsize)
+    block_rows = max(1, int(target_bytes) // per_row)
+
+    profile.update(count=n, nodata=float("nan"))
+    tmp = path.with_suffix(path.suffix + ".part")
+    try:
+        with rasterio.open(tmp, "w", **profile) as dst:
+            with rasterio.open(path) as src:
+                for row0 in range(0, height, block_rows):
+                    rows = min(block_rows, height - row0)
+                    win = Window(0, row0, width, rows)
+                    vals = src.read(list(range(1, n + 1)), window=win)
+                    masks = src.read(list(range(n + 1, count + 1)), window=win)
+                    dst.write(apply_masks_to_values(vals, masks), window=win)
+            for i, name in enumerate(descriptions, start=1):
+                if name:
+                    dst.set_band_description(i, name)
+            for k, v in tags.items():
+                dst.update_tags(**{k: v})
+            for i, bt in enumerate(band_tags, start=1):
+                if bt:
+                    dst.update_tags(i, **bt)
+        tmp.replace(path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    aux = path.with_name(path.name + ".aux.xml")
+    aux.unlink(missing_ok=True)
+    return {"bands": n, "dropped_mask_bands": n, "dtype": dtype}
+
 
 def write_chunk_array(dst, window: dict[str, int], arr) -> None:
     """把一片数组写进目标栅格的对应窗口（`dst` = rasterio 写句柄，窗口已是目标坐标）。"""

@@ -16,13 +16,17 @@ import rasterio
 
 from gis.export_chunks import (
     BYTES_PER_PIXEL_BAND,
+    MASK_BAND_BYTES_PER_BAND,
     MAX_DOWNLOAD_BYTES,
+    apply_masks_to_values,
     bytes_per_pixel_band,
     chunk_request_bytes,
     coerce_nan,
     coerce_nan_stack,
+    collapse_mask_bands,
     is_retryable_error,
     locate_actual_window,
+    mask_band_name,
     normalize_nodata_to_nan,
     plan_download_chunks,
     window_bounds,
@@ -265,6 +269,82 @@ class TestCoerceNanStack(unittest.TestCase):
     def test_requires_three_dim(self):
         with self.assertRaises(ValueError):
             coerce_nan_stack(np.zeros((4, 5)), 0.0)
+
+
+class TestMaskBands(unittest.TestCase):
+    """C15 A1 追加：下载带逐波段掩膜带 → 真值 0 与哨兵 0 分开（单波段也准）。
+
+    GEO_TIFF 的 nodata 是文件级的（float32 -inf / float64 0.0），单波段 float64
+    产物无法靠哨兵区分「真值 0」与「无数据」；唯一可靠来源是 GEE 掩膜本身。
+    """
+
+    def test_mask_band_name_is_valid_ee_identifier(self):
+        self.assertEqual(mask_band_name("B2"), "mask_B2")
+        self.assertTrue(mask_band_name("B2")[0].isalpha(),
+                        "EE 波段名不能以下划线开头（实测 __m_B2 被拒）")
+
+    def test_mask_budget_included(self):
+        """掩膜带计入预算：同一上限下分母变大 → 单请求像素数变小。"""
+        plain = plan_download_chunks(5000, 5000, 3, bytes_per_pixel_band=9)[0]
+        masked = plan_download_chunks(
+            5000, 5000, 3,
+            bytes_per_pixel_band=9 + MASK_BAND_BYTES_PER_BAND)[0]
+        self.assertLess(masked["width"] * masked["height"],
+                        plain["width"] * plain["height"])
+
+    def test_apply_masks_keeps_real_zero(self):
+        """掩膜=1 的真值 0 必须保留；掩膜=0 / NaN 掩膜 → NaN。"""
+        vals = np.array([[[0.0159, 0.0, 5.0, 7.0]]], dtype=np.float64)
+        masks = np.array([[[1.0, 1.0, 0.0, np.nan]]], dtype=np.float64)
+        out = apply_masks_to_values(vals, masks)
+        self.assertEqual(out[0, 0, 0], 0.0159)
+        self.assertEqual(out[0, 0, 1], 0.0, "真值 0 不得抹掉（事故本体）")
+        self.assertTrue(np.isnan(out[0, 0, 2]), "掩膜 0 → NaN")
+        self.assertTrue(np.isnan(out[0, 0, 3]), "掩膜 NaN → NaN")
+        self.assertFalse(np.isnan(vals).any(), "不得就地修改入参")
+
+    def test_collapse_drops_mask_bands(self):
+        """2n 波段下载件 → n 波段产物：掩膜→NaN、丢掩膜带、nodata=nan、无 .part 残留。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "dl.tif"
+            vals = np.array(
+                [[[0.0159, 0.0, 1.0]], [[2.0, 2.0, 2.0]]], dtype=np.float64)
+            masks = np.array(
+                [[[1.0, 1.0, 0.0]], [[1.0, 1.0, 1.0]]], dtype=np.float64)
+            with rasterio.open(
+                p, "w", driver="GTiff", width=3, height=1, count=4,
+                dtype="float64", crs="EPSG:32650",
+                transform=(10.0, 0.0, 500_000.0, 0.0, -10.0, 4_000_000.0),
+                nodata=0.0,
+            ) as ds:
+                ds.write(vals[0], 1)
+                ds.write(vals[1], 2)
+                ds.write(masks[0], 3)
+                ds.write(masks[1], 4)
+            info = collapse_mask_bands(p, 2)
+            self.assertEqual(info["bands"], 2)
+            with rasterio.open(p) as ds:
+                self.assertEqual(ds.count, 2)
+                self.assertTrue(math.isnan(ds.nodata))
+                arr = ds.read()
+            self.assertEqual(arr[0, 0, 1], 0.0, "掩膜=1 的真值 0 保留")
+            self.assertTrue(np.isnan(arr[0, 0, 2]), "掩膜=0 → NaN")
+            self.assertEqual(arr[1, 0, 0], 2.0)
+            self.assertFalse(any(x.name.endswith(".part")
+                                 for x in Path(tmp).iterdir()))
+
+    def test_collapse_rejects_wrong_band_count(self):
+        """波段数不符要报错，不得静默退回哨兵猜测。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "bad.tif"
+            with rasterio.open(
+                p, "w", driver="GTiff", width=2, height=1, count=2,
+                dtype="float64", crs="EPSG:32650",
+                transform=(10.0, 0.0, 500_000.0, 0.0, -10.0, 4_000_000.0),
+            ) as ds:
+                ds.write(np.ones((2, 1, 2), dtype=np.float64))
+            with self.assertRaises(ValueError):
+                collapse_mask_bands(p, 2)
 
 
 class TestNodataNormalization(unittest.TestCase):
