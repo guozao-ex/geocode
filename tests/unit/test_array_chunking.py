@@ -5,6 +5,7 @@
   - 路径选择（阈值 64M、GEOCODE_ARRAY_PATH 强制与非法值、指纹不受影响）
   - 分块路径写回（产物可读回、与 direct 路径逐像素一致、NaN 语义、
     xee 原始 attrs / scale_factor / time CF 编码复刻）
+  - 单块拉取的有界重试（瞬时错误自愈 / 确定性错误立刻抛 / 预算耗尽可读报错）
   - 守卫：全程无事后 .chunk()（A3 离线层）
 
 不碰网络：ee/xee 边界全部以伪对象替身（fake xr.Dataset + 假 open_dataset 工厂）。
@@ -411,6 +412,103 @@ class TestChunkedWriter(_EndToEndBase):
         self.assertEqual(
             self.recorder.calls[0].get("io_chunks"), plan_chunks(860, 784, 1, 3),
         )
+
+
+class TestChunkedFetchRetry(_EndToEndBase):
+    """C15 追加（A1 第 6 次实测事故的离线复现）：单块拉取的瞬时错误必须自愈。
+
+    事故（2026-10-12 A1 第 6 次）：本机代理瞬时拒连（`WinError 10061` →
+    requests ConnectionError）让 `ds[b].isel(...).values` 当场抛出，而该块
+    已消耗数分钟 GEE 渲染 —— 与下载路径同口径再包一层有界重试。
+    重试分类逻辑本身由 gis.export_chunks.is_retryable_error 承担（已离线覆盖）。
+    """
+
+    def _run_chunked(self, fail_first_isel: bool, *, attempts: int = 5,
+                     permanent: bool = False):
+        """跑一次 chunked 写盘；可注入首个 isel 失败。返回 (isel 调用次数, result, exc)。
+
+        注：块拉取走的是 `DataArray.isel`（`ds[b]` 是 DataArray），不是
+        `Dataset.isel`（后者只被 _array_sample 用）；补丁必须打在 DataArray 上，
+        否则失败根本不会落在写入循环里（第一版测试就踩了这个坑）。
+        """
+        from gis.emit import emit_array
+        from gis.jobs import Job
+
+        spec = make_spec()
+        real_isel = xr.DataArray.isel
+        calls = {"n": 0}
+
+        def flaky(da, *a, **k):
+            calls["n"] += 1
+            if fail_first_isel and (permanent or calls["n"] == 1):
+                raise ConnectionError("proxy refused (WinError 10061)")
+            return real_isel(da, *a, **k)
+
+        exc = None
+        result = None
+        with mock.patch("gis.emit.DOWNLOAD_ATTEMPTS", attempts), \
+             mock.patch("gis.emit.DOWNLOAD_BACKOFF_SECONDS", (0.0,)), \
+             mock.patch.object(xr.DataArray, "isel", flaky), \
+             mock.patch.dict(os.environ, {ARRAY_PATH_ENV: "chunked"}):
+            try:
+                result = emit_array(
+                    Job(id="t-retry", kind="emit", spec=spec, exit="array")
+                )
+            except BaseException as e:   # noqa: BLE001 — 测试要拿异常本体
+                exc = e
+        return calls["n"], result, exc
+
+    def test_transient_error_self_heals(self):
+        """首次 isel 抛瞬时错误 → 重试后继续，产物与无故障跑逐像素一致。"""
+        clean_n, clean, _ = self._run_chunked(False)
+        Path(clean["path"]).unlink()      # 清缓存，避免第二次命中复用分支
+        failed_n, result, exc = self._run_chunked(True)
+
+        self.assertIsNone(exc)
+        self.assertIsNotNone(result)
+        self.assertEqual(failed_n, clean_n + 1, "首次失败应恰好重试一次")
+
+        expected = _make_fake_ee_ds((860, 784), n_images=1)
+        with xr.open_dataset(result["path"]) as ds:
+            for b in ("B4", "B3", "B2"):
+                got, want = ds[b].values, expected[b].values
+                self.assertTrue(np.array_equal(np.isnan(got), np.isnan(want)), b)
+                self.assertEqual(
+                    float(np.abs(got[~np.isnan(got)] - want[~np.isnan(want)]).max()),
+                    0.0, b,
+                )
+
+    def test_deterministic_error_not_retried(self):
+        """确定性错误（ValueError）不消耗重试预算：立刻抛，且不留半成品。"""
+        from gis.emit import emit_array
+        from gis.jobs import Job
+
+        spec = make_spec()
+        calls = {"n": 0}
+
+        def hard_fail(da, *a, **k):
+            calls["n"] += 1
+            raise ValueError("not found: deterministic")
+
+        with mock.patch.object(xr.DataArray, "isel", hard_fail), \
+             mock.patch.dict(os.environ, {ARRAY_PATH_ENV: "chunked"}):
+            with self.assertRaises(ValueError):
+                emit_array(Job(id="t-hard", kind="emit", spec=spec, exit="array"))
+
+        self.assertEqual(calls["n"], 1, "确定性错误只允许一次尝试")
+        self.assertEqual(
+            [p for p in self.derived.rglob("*") if p.is_file()], [],
+            "失败不得留半成品 / .part",
+        )
+
+    def test_retry_budget_exhausted_raises_original(self):
+        """瞬时错误连发时按预算耗尽，抛出的仍是原异常（带尝试次数）。"""
+        n_calls, result, exc = self._run_chunked(True, attempts=3, permanent=True)
+        self.assertIsNone(result)
+        self.assertIsInstance(exc, ConnectionError)
+        self.assertEqual(n_calls, 3, "3 次预算 → 3 次尝试")
+        self.assertEqual(getattr(exc, "geocode_attempts", None), 3)
+        self.assertEqual(getattr(exc, "geocode_retries", None), 2)
 
 
 if __name__ == "__main__":

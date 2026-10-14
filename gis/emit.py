@@ -1336,13 +1336,27 @@ def _compute_array_chunked_to_ncdf(
                     y1 = min(y0 + h_blk, h_total)
                     for x0 in range(0, w_total, w_blk):
                         x1 = min(x0 + w_blk, w_total)
-                        for b in bands:
-                            block = ds[b].isel(
-                                time=slice(t0, t1), y=slice(y0, y1), x=slice(x0, x1),
-                            ).values
-                            f.variables[b][t0:t1, y0:y1, x0:x1] = np.asarray(
-                                block, dtype=np.float32,
-                            )
+
+                        # 单块取数包一层有界重试（与下载路径同口径，复用 _retry 的
+                        # 瞬时错误分类）。实测教训（A1 第 6 次，2026-10-12）：本机
+                        # 代理瞬时拒连（`WinError 10061`）让第 29/66 块当场失败，
+                        # 而一块值数分钟 GEE 渲染 —— 瞬时抖动必须能自愈。
+                        # 重放安全：块内逐波段写回同一区间，重复写入幂等。
+                        def _fetch_block(t0=t0, t1=t1, y0=y0, y1=y1,
+                                         x0=x0, x1=x1) -> None:
+                            for b in bands:
+                                block = ds[b].isel(
+                                    time=slice(t0, t1),
+                                    y=slice(y0, y1), x=slice(x0, x1),
+                                ).values
+                                f.variables[b][t0:t1, y0:y1, x0:x1] = np.asarray(
+                                    block, dtype=np.float32,
+                                )
+
+                        _retry(
+                            _fetch_block, job=job,
+                            label=f"分块拉取 块 {done + 1}/{n_blocks}",
+                        )
                         done += 1
                         job.check_cancelled()
                         job.progress(
