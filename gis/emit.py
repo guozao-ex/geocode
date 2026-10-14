@@ -691,9 +691,10 @@ def _download_chunked(
                             for k, name in enumerate(src.descriptions or (), start=1):
                                 if name and k <= n_bands:
                                     dst.set_band_description(k, name)
-                        # C15 A4：单片里的 nodata 值统一成 NaN 再写入目标栅格
+                        # C15 A4 + A1 修正：多波段必须用**整文件级**哨兵判据
+                        # （单波段判据会把真值恰为 0 的像素误抹，A1 实测 7/165.4M）
                         dst.write(
-                            _chunks.coerce_nan(block, src.nodata),
+                            _chunks.coerce_nan_stack(block, src.nodata),
                             window=Window(win["x"], win["y"],
                                           win["width"], win["height"]),
                         )

@@ -20,6 +20,7 @@ from gis.export_chunks import (
     bytes_per_pixel_band,
     chunk_request_bytes,
     coerce_nan,
+    coerce_nan_stack,
     is_retryable_error,
     locate_actual_window,
     normalize_nodata_to_nan,
@@ -225,6 +226,47 @@ class TestCoerceNan(unittest.TestCase):
         self.assertEqual(out[0, 0], 7.0)
 
 
+class TestCoerceNanStack(unittest.TestCase):
+    """多波段整文件级哨兵判据（C15 A1 实测事故的离线复现）。
+
+    事故（2026-10-13 真实尺度）：GEO_TIFF 的 nodata=0.0（float64）是**整文件级**的，
+    掩膜像素全波段都写 0；单波段判据把 B2 真值恰为 0 的 7 个像素误抹成 NaN，
+    与 array 出口的掩膜比对失败。EE 权威采样确认这 7 个像素掩膜=1、真值=0。
+    """
+
+    def test_all_bands_sentinel_becomes_nan(self):
+        s = np.array([[[0.0, 1.0]], [[0.0, 2.0]], [[0.0, 3.0]]], dtype=np.float64)
+        out = coerce_nan_stack(s, 0.0)
+        self.assertTrue(np.isnan(out).all(axis=0)[0, 0])
+        self.assertEqual(list(out[:, 0, 1]), [1.0, 2.0, 3.0])
+        self.assertFalse(np.isnan(s).any(), "不得就地修改入参")
+
+    def test_single_band_sentinel_keeps_real_zero(self):
+        """只有一个波段是哨兵 → 该像素有效，真值 0 必须保留（事故本体）。"""
+        s = np.array([[[0.0159]], [[0.0251]], [[0.0]]], dtype=np.float64)
+        out = coerce_nan_stack(s, 0.0)
+        self.assertFalse(np.isnan(out).any(), "全波段哨兵才判无效")
+        self.assertEqual(out[2, 0, 0], 0.0)
+
+    def test_non_finite_is_per_band(self):
+        s = np.array([[[np.nan]], [[np.inf]], [[2.5]]], dtype=np.float32)
+        out = coerce_nan_stack(s, 0.0)
+        self.assertTrue(np.isnan(out[0, 0, 0]) and np.isnan(out[1, 0, 0]))
+        self.assertEqual(out[2, 0, 0], np.float32(2.5),
+                         "非有限不牵连其他波段")
+
+    def test_integer_stack_promoted(self):
+        s = np.array([[[0, 7]], [[0, 8]]], dtype=np.uint16)
+        out = coerce_nan_stack(s, 0)
+        self.assertEqual(out.dtype, np.float32)
+        self.assertTrue(np.isnan(out[0, 0, 0]) and np.isnan(out[1, 0, 0]))
+        self.assertEqual(out[0, 0, 1], np.float32(7.0))
+
+    def test_requires_three_dim(self):
+        with self.assertRaises(ValueError):
+            coerce_nan_stack(np.zeros((4, 5)), 0.0)
+
+
 class TestNodataNormalization(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -272,6 +314,32 @@ class TestNodataNormalization(unittest.TestCase):
         p = self._write("c.tif", dtype=np.float32, nodata=0.0, nodata_value=0.0)
         normalize_nodata_to_nan(p)
         self.assertFalse(any(x.name.endswith(".part") for x in self.root.iterdir()))
+
+    def test_multiband_sentinel_needs_all_bands(self):
+        """多波段：全波段哨兵才判无数据；单波段哨兵（真值 0）保留 —— A1 事故的回归用例。"""
+        p = self.root / "multi.tif"
+        data = np.zeros((3, 2, 3), dtype=np.float64)
+        data[:, 0, 0] = [0.0, 0.0, 0.0]        # 掩膜像素：全波段哨兵
+        data[:, 0, 1] = [0.0159, 0.0251, 0.0]  # 有效像素：B2 真值恰为 0
+        data[:, 1, 0] = [1.0, 2.0, 3.0]
+        data[:, 1, 1] = [np.nan, 5.0, 6.0]     # 仅 B4 非有限
+        with rasterio.open(
+            p, "w", driver="GTiff", width=3, height=2, count=3,
+            dtype="float64", crs="EPSG:32650",
+            transform=(10.0, 0.0, 500_000.0, 0.0, -10.0, 4_000_000.0),
+            nodata=0.0,
+        ) as ds:
+            ds.write(data)
+        info = normalize_nodata_to_nan(p)
+        self.assertTrue(info["changed"])
+        with rasterio.open(p) as ds:
+            self.assertTrue(math.isnan(ds.nodata))
+            arr = ds.read()
+        self.assertTrue(np.isnan(arr[:, 0, 0]).all(), "全波段哨兵 → 全 NaN")
+        self.assertFalse(np.isnan(arr[:, 0, 1]).any(), "真值 0 必须保留")
+        self.assertEqual(arr[2, 0, 1], 0.0)
+        self.assertTrue(np.isnan(arr[0, 1, 1]) and arr[1, 1, 1] == 5.0,
+                        "非有限只影响本波段")
 
     def test_write_chunk_array_places_window(self):
         p = self.root / "probe.tif"

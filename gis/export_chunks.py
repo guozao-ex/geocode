@@ -218,15 +218,29 @@ def locate_actual_window(
     return (col0, row0, int(window["width"]), int(window["height"]))
 
 
+def _finite_sentinel(src_nodata):
+    """规范化源 nodata：非有限（±inf / nan）返回 None（非有限检查已覆盖）。"""
+    if src_nodata is None:
+        return None
+    try:
+        sd = float(src_nodata)
+    except (TypeError, ValueError):
+        return None
+    return sd if math.isfinite(sd) else None
+
+
 def coerce_nan(arr, src_nodata=None):
     """
-    把源 nodata 值与所有非有限值统一成 `NaN`（C15 A4）。
+    单数组（**单波段口径**）把源 nodata 值与所有非有限值统一成 `NaN`（C15 A4）。
 
     - 浮点容器：保留 dtype，只替换"无效像素"；
     - 整数容器：提升为 float32（NaN 需要浮点容器）；
     - 不修改入参数组（有替换时返回副本）。
 
     `src_nodata` 为 ±inf / nan 时无需额外比较（非有限检查已覆盖）。
+
+    ⚠️ 多波段请用 `coerce_nan_stack()`：GEO_TIFF 的 nodata 是**整文件级**的，
+    单波段判据会把「真值恰好等于哨兵」的像素误抹（A1 实测 7/165.4M）。
     """
     import numpy as np
 
@@ -234,13 +248,47 @@ def coerce_nan(arr, src_nodata=None):
     if not np.issubdtype(a.dtype, np.floating):
         a = a.astype("float32")
     mask = ~np.isfinite(a)
-    if src_nodata is not None:
-        try:
-            sd = float(src_nodata)
-        except (TypeError, ValueError):
-            sd = None
-        if sd is not None and math.isfinite(sd):
-            mask = mask | (a == sd)
+    sd = _finite_sentinel(src_nodata)
+    if sd is not None:
+        mask = mask | (a == sd)
+    if mask.any():
+        a = a.copy()
+        a[mask] = np.nan
+    return a
+
+
+def coerce_nan_stack(stack, src_nodata=None):
+    """
+    多波段数组 `(bands, rows, cols)` 的 nodata 归一 —— **整文件级哨兵语义**。
+
+    为什么不能逐波段判：GEE 的 GEO_TIFF 只声明一个**文件级** nodata
+    （float32 → `-inf`，float64 → `0.0`），掩膜像素在**所有波段**都写这个哨兵；
+    而某个波段的**真值**也可能恰好等于它。A1（2026-10-13 真实尺度实测）就撞上了：
+    泰安真彩色 B2 有 7 个像素真值为 0，被单波段判据抹成 NaN，与 array 出口的掩膜
+    比对失败（EE 权威采样确认这 7 个像素掩膜=1、真值=0）。
+
+    判据：
+      - 非有限值 **逐波段**归一（NaN/±inf 不牵连其他波段）；
+      - 等于哨兵的像素，**只有全波段都是哨兵**才判为无数据（整文件级 nodata）。
+
+    单波段 float64 产物仍存在「哨兵与真值碰撞」的理论风险（TIFF 里无从区分），
+    已记录在交接 known_limits。
+    """
+    import numpy as np
+
+    a = np.asarray(stack)
+    if a.ndim < 3:
+        raise ValueError(
+            f"coerce_nan_stack 需要 (bands, rows, cols) 三维数组，收到 {a.shape}。\n"
+            "  单波段/单数组请用 coerce_nan()；不要把二维数组当成多波段传进来。"
+        )
+    if not np.issubdtype(a.dtype, np.floating):
+        a = a.astype("float32")
+    mask = ~np.isfinite(a)                       # 逐波段
+    sd = _finite_sentinel(src_nodata)
+    if sd is not None:
+        all_sentinel = (a == sd).all(axis=0)     # (rows, cols) 跨波段
+        mask = mask | all_sentinel[np.newaxis, :, :]
     if mask.any():
         a = a.copy()
         a[mask] = np.nan
@@ -338,6 +386,9 @@ def normalize_nodata_to_nan(path: Path, *, block_rows: int = 1024) -> dict:
     `-inf`（float32）/ `0`（float64）/ 整数哨兵，只改声明的话，`rasterio`
     `masked=True` 读回仍会看到 `-inf` 或 0，与 NetCDF 的 NaN 语义不一致。
 
+    ⚠️ 多波段用 `coerce_nan_stack` 的整文件级判据（全波段都是哨兵才算无数据）：
+    逐个波段判会把「真值恰好等于哨兵」的像素误抹（A1 实测 7/165.4M）。
+
     返回 `{"changed": bool, "nodata": 原始声明, "dtype": 原始 dtype, ...}`；
     已是 NaN 语义的产物直接短路（`changed=False`），不做无谓重写。
     重写走同目录 `.part` + 原子 rename，失败不留半截文件。
@@ -372,14 +423,16 @@ def normalize_nodata_to_nan(path: Path, *, block_rows: int = 1024) -> dict:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".part")
     try:
+        # 行块按波段数等比缩小：一次读入的总字节量与单波段时同量级
+        rows_per_read = max(1, int(block_rows) // max(1, count))
         with rasterio.open(tmp, "w", **profile) as dst:
             with rasterio.open(path) as src:
+                for row0 in range(0, height, rows_per_read):
+                    rows = min(rows_per_read, height - row0)
+                    win = Window(0, row0, width, rows)
+                    stack = src.read(window=win)      # (count, rows, width)
+                    dst.write(coerce_nan_stack(stack, src_nodata), window=win)
                 for i in range(1, count + 1):
-                    for row0 in range(0, height, block_rows):
-                        rows = min(block_rows, height - row0)
-                        win = Window(0, row0, width, rows)
-                        block = src.read(i, window=win)
-                        dst.write(coerce_nan(block, src_nodata), i, window=win)
                     if i <= len(descriptions) and descriptions[i - 1]:
                         dst.set_band_description(i, descriptions[i - 1])
             for k, v in tags.items():
