@@ -85,10 +85,15 @@ def make_spec(**over) -> ArtifactSpec:
 
 
 def make_p0_spec(**over) -> ArtifactSpec:
-    """P0 样本 spec（金指纹按时代取值，见 GOLDEN_FINGERPRINTS）。时序字段缺省。"""
+    """P0 样本 spec（金指纹按时代取值，见 GOLDEN_FINGERPRINTS）。时序字段缺省。
+
+    `render` 可传 `RenderSpec` 对象（`from_dict` 只吃 dict，故在此单独摘出来用 `with_` 叠加）。
+    """
     kw = dict(P0_SPEC_DICT)
     kw.update(over)
-    return ArtifactSpec.from_dict(kw)
+    render = kw.pop("render", None)
+    spec = ArtifactSpec.from_dict(kw)
+    return spec if render is None else spec.with_(render=render)
 
 
 # C6 大网格分块 smoke 的 spec（约 82km×82km @10m，est ≥ 64M 像素 → 走 chunked 路径）。
