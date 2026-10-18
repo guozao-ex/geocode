@@ -35,6 +35,7 @@ capability 的行为，必须在此**追加一行**并给对方 spec 加注记�
 | `verify-all`（C14 → c17） | C14 原文的 7 个 Scenario 引用为 A1–A7；c17 的 brief 验收示例也占用 A1–A5（语义不同：条件项升级 / 措辞一致 / 发布面一致 / ruff 接入 / 回归）。若沿用原编号会造成**同名不同义的假映射**，故按规范 2「编号用该 change 的验收集编号」把这 7 个 Scenario 整体后移为 **A6–A12**，c17 新增的 3 个场景为 **A13–A15**。**场景正文逐字未改**，仅标题内引用编号后移；spec 内已加「c17 编号说明」注明对应关系（A6←A1 … A12←A7）。（与 C13 自身 spec 的 A13–A24 自纠同类） | 2026-10-18（c17） |
 | `verify-all`（C14 → c17） | 原文「入口按静态的『网络依赖分类表』把检查项分为 RUN 与 SKIP 两层」在条件项引入后不再字面成立（层位由盘上/环境事实决定），已就地加 `⚠️ c17 修订` 注记说明；SKIP 层 `smoke_map_renderers` 一条加注记收窄为「仅缓存缺失时 SKIP」；退出码段补注 `ruff-check` 参与同一退出码语义。**原文全部保留未删** | 2026-10-18（c17） |
 | `verify-all`（C14 → c17，第二批） | 第二批范围（渲染失败语义收紧）新增 4 项验收，原编号方案出现空档（brief A1–A5 + A16–A19，spec 占 A6–A15），违反「编号连续且 brief/spec 互不重叠」；已重排为 **brief A1–A9 / spec A10–A23**（共 23 项，连续无空档）。spec 内「c17 编号说明」已同步给出 C14 旧号映射（A10←A1 … A16←A7）。场景正文逐字未改 | 2026-10-18（c17） |
+| `verify-all`（C14 → c17 → c21） | c21 按 C13 规范 2（编号用该 change 的验收集编号）把 14 个既有场景的标题内引用从 c17 的 **A10–A23** 整体前移为 **A8–A21**，新增 4 个场景 **A22–A25**（报告自查接入 RUN 层 / 自查失败即入口失败 / 两遍写法下报告自洽 / 缺少自查工具时归 SKIP）；**各场景正文逐字未改**，仅标题内编号重排，文末加 c21 编号说明（c17 编号说明原文保留）。同时 RUN 层新增条件项 `report-selfcheck`、报告节补「两遍写法」与「自指说明」、退出码节补 c21 说明。原文零删除，发布面与两份归档副本逐字节同步 | 2026-10-18（c21） |
 | `c13-spec-consistency`（C13） | 不变量 4 原句「每个归档 change 目录含 `brief.md`、`comet-state.yaml`、`verification.md`、`specs/*/spec.md`」未考虑 Comet Runtime 的「不改变产品行为」豁免（change 的 `brief.md` 写一行合规声明即可免写目标 Spec）。**原文保留**，就地补 ⚠️ c20 修订注记：`specs/*/spec.md` 缺失时，仅当 `brief.md` 的可见行含合规豁免声明（`不改变产品行为` / `不涉及产品行为` / `仅文档` / `no product behavior change` / `documentation-only` + `：`，理由非占位）才放行；其余必备件仍强制。判据与 Runtime 的 `hasExplicitSpecExemption` / `isPlaceholderExemptionReason` 同源。触发事故：c19-verify-report-drift 走豁免归档后 main 全量单测 393 例 1 失败 | 2026-10-18（c20） |
 
 ## 二、发布面四条规范
@@ -57,6 +58,9 @@ capability 的行为，必须在此**追加一行**并给对方 spec 加注记�
 - H1 前缀与目录名一致（规范 1）；
 - 发布面 spec 在归档面有逐字节相同副本，且无孤儿 capability（规范 4）；
 - 每个 Scenario 带标题内引用、且无标题外独立引用行（规范 2）；
-- 每个归档 change 目录含 `brief.md` / `comet-state.yaml` / `verification.md` / `specs/*/spec.md`。
+- 每个归档 change 目录含 `brief.md` / `comet-state.yaml` / `verification.md` / `specs/*/spec.md`；
+  **例外（c20 修订）**：`brief.md` 声明了合规（非占位）的「不改变产品行为」豁免时，允许没有
+  `specs/` —— 判据与 Comet Runtime 的 `hasExplicitSpecExemption` / `isPlaceholderExemptionReason`
+  同源，见 `c13-spec-consistency` 的 Scenario G1 注记与下方「就地订正」表。
 
 规范 3 与语义级取代关系无法自动判定，靠本文件的人工台账 + 审阅。

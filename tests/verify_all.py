@@ -10,10 +10,17 @@
     6. smoke-map-renderers-qgis/-arcpy —— 条件项：当代指纹的 P0 栅格缓存存在（离线可跑）时入
                                         RUN 层，缺失时 SKIP 且文案写实；
     7. ruff-check                    —— 可选 RUN 项：uv/ruff 可用时跑 ruff 门禁并计分，
-                                        不可用（含 uv 缓存冷）时 SKIP + 安装提示，不 FAIL。
+                                        不可用（含 uv 缓存冷）时 SKIP + 安装提示，不 FAIL；
+    8. report-selfcheck              —— 条件 RUN 项（c21）：写完报告后对**刚落盘**的报告跑一次
+                                        事实一致性自查（tools/verify_facts_check.py），把结论作为
+                                        一条检查项写进同一份报告；工具缺失时 SKIP + 提示，不 FAIL。
 
 c17 的目标是「报告与事实一致」：层位由盘上事实决定，SKIP 文案不得与盘上/环境事实相悖。
 条件项与可选项一律**先探条件、再定层位**，并在报告里写清判据（cache_probe / tool_probe）。
+
+c21 起入口**自身保证**这条承诺：main() 采用**两遍写法** —— 先落一份不含自查项的报告，再用它跑
+自查，把结论插回 checks 后整体重写。最终报告因此同时是「被查对象」与「结论载体」；自查读到的
+是**第 1 版**快照（不含自身），故对最终报告单独复跑 tools/verify_facts_check.py 仍应退出 0。
 
 在线依赖检查（需真实 GEE 像素/认证）一律 SKIP 并注明原因与单独复跑方式；
 本入口不提供 --online 开关。
@@ -353,6 +360,101 @@ def run_ruff(check: Check) -> Check:
 
 
 # ---------------------------------------------------------------------------
+# c21 报告自查（两遍写法）与汇总辅助
+# ---------------------------------------------------------------------------
+
+SELFCHECK_TOOL = ROOT / "tools" / "verify_facts_check.py"
+SELFCHECK_MODULE = "报告一致性"
+
+
+def run_report_selfcheck(check: Check, report_path: Path) -> Check:
+    """对**刚落盘**的报告跑一次事实一致性自查（tools/verify_facts_check.py）。
+
+    工具缺失时归 SKIP + 提示（与 ruff 门禁同款，不 FAIL）。工具退出码 0 → PASS；
+    1（报告与盘上事实不一致）或 2（输入错误）→ FAIL，失败摘要附前若干行报告正文。
+    """
+    check.probe = {"kind": "tool_probe", "cmd": f"{PY} tools/verify_facts_check.py",
+                   "path": "tools/verify_facts_check.py", "ok": SELFCHECK_TOOL.is_file()}
+    if not SELFCHECK_TOOL.is_file():
+        check.layer = "skip"
+        check.status = "skip"
+        check.skip_reason = (
+            "缺 tools/verify_facts_check.py：报告自查为可选 RUN 项，缺失时不判失败。"
+            "恢复：使用含 tools/ 的版本，或 git checkout <commit> -- tools/")
+        return check
+
+    t0 = time.time()
+    RUN_LOGS.mkdir(parents=True, exist_ok=True)
+    log_path = RUN_LOGS / f"{check.name}.log"
+    cmd = [PY, str(SELFCHECK_TOOL), str(report_path)]
+    code, out, err = None, "", ""
+    try:
+        proc = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=300)
+        code, out, err = proc.returncode, proc.stdout or "", proc.stderr or ""
+    except Exception as e:  # noqa: BLE001 —— 执行异常按 FAIL 记录（不炸整个入口）
+        err = f"{type(e).__name__}: {e}"
+    check.duration_s = round(time.time() - t0, 1)
+    check.log_path = str(log_path)
+    log_path.write_text(f"--- cmd ---\n{' '.join(cmd)}\n\n--- stdout ---\n{out}\n\n"
+                        f"--- stderr ---\n{err}", encoding="utf-8")
+    check.status = "pass" if code == 0 else "fail"
+    if code != 0:
+        head = "\n".join(out.strip().splitlines()[:24])
+        tail = f"\n----stderr----\n{err[-FAIL_TAIL:]}" if err.strip() else ""
+        check.fail_summary = (head + tail)[-FAIL_TAIL:]
+    return check
+
+
+def summarize(checks: list[Check]) -> tuple[dict, list[Check]]:
+    """汇总计数与失败项（c21 抽出：两遍写法需要算两次）。"""
+    failed = [c for c in checks if c.layer == "run" and c.status == "fail"]
+    summary = {
+        "run": sum(1 for c in checks if c.layer == "run"),
+        "passed": sum(1 for c in checks if c.status == "pass"),
+        "failed": len(failed),
+        "skipped": sum(1 for c in checks if c.status == "skip"),
+    }
+    return summary, failed
+
+
+def build_coverage(checks: list[Check]) -> tuple[dict, list[str]]:
+    """覆盖矩阵与未覆盖模块（c21 抽出：两遍写法需要算两次）。"""
+    by_name = {c.name: c for c in checks}
+    coverage: dict[str, list[dict]] = {}
+    uncovered: list[str] = []
+    for module, names in MATRIX.items():
+        rows = [{"check": n, "status": by_name[n].status if n in by_name else "missing"} for n in names]
+        coverage[module] = rows
+        if not names or all(r["status"] in ("missing",) for r in rows):
+            uncovered.append(module)
+    return coverage, uncovered
+
+
+def build_report(started, finished, overall, summary, checks, coverage, uncovered) -> dict:
+    """组装 JSON 报告 dict（c21 抽出：两遍写法共用同一组装逻辑）。"""
+    return {
+        "schema": "geocode.verify-all.report.v1",
+        "started_at": started.isoformat(),
+        "finished_at": finished.isoformat(),
+        "overall": overall,
+        "summary": summary,
+        "network_allowlist": ["127.0.0.1"],  # 本轮 RUN 层唯一允许访问的主机
+        "checks": [
+            {
+                "name": c.name, "module": c.module, "layer": c.layer, "status": c.status,
+                "duration_s": c.duration_s, "log_path": c.log_path,
+                "skip_reason": c.skip_reason, "note": c.note,
+                "fail_summary": c.fail_summary, "probe": c.probe,
+            }
+            for c in checks
+        ],
+        "coverage_matrix": coverage,
+        "uncovered_modules": uncovered,
+    }
+
+
+# ---------------------------------------------------------------------------
 # 覆盖矩阵（README 功能面 → 检查项）
 # ---------------------------------------------------------------------------
 
@@ -373,6 +475,7 @@ MATRIX: dict[str, list[str]] = {
     "add-in 探测（端点级）": ["tests-unit"],
     "preflight": ["tests-unit"],
     "静态检查（ruff 门禁）": ["ruff-check"],
+    "报告一致性": ["report-selfcheck"],
 }
 
 
@@ -394,18 +497,33 @@ def build_checks() -> list[Check]:
     # rescan-big：前置产物存在才 RUN，缺失则 SKIP（与 map_renderers 缓存未命中同款语义）
     big_name = _era_product_name("big_chunk", "nc") or "s2_chunking_big_smoke.<指纹8位>.nc"
     big_artifact = ROOT / "data" / "derived" / big_name
-    if big_artifact.exists():
-        checks.append(C("smoke-array-chunking-rescan-big", "array chunking"))
+    big_size = big_artifact.stat().st_size if big_artifact.exists() else 0
+    # c21：条件项必须带层位判据（verify-all spec 报告节：条件项为 cache_probe）。此前本项 probe 为
+    # null，使 tools/verify_facts_check.py 的 P5/P7 无法覆盖它的措辞（实测把 skip_reason 改写成
+    # 「已命中」工具仍判绿）。层位门槛与 probe.hit 同源（「存在且非空」，见下方 if）—— 0 字节产物
+    # 视为不可用；min_bytes=0 表示本项无额外体积门槛；size_bytes 仍如实记录以便判断是否被截断。
+    probe_big = {"kind": "cache_probe", "path": f"data/derived/{big_name}",
+                 "exists": big_artifact.exists(), "size_bytes": big_size,
+                 "min_bytes": 0, "hit": big_size > 0}
+    if big_size > 0:
+        # c21（#1 修复）：层位门槛与 probe.hit 同源（「存在且非空」），使层位、probe.hit、
+        # 工具侧独立重算的 hit_now 三处一致 —— 否则「0 字节产物存在」时 P7 会多报一条噪声。
+        big_check = C("smoke-array-chunking-rescan-big", "array chunking")
+        big_check.probe = probe_big
+        checks.append(big_check)
     else:
         # 措辞纪律（c17 / A2）：只陈述「本次执行根下缺失」，不断言别处有无 ——
         # 该产物曾确实存在于主工作区盘上，旧文案「不在主工作区」与事实相悖。
-        checks.append(skip_check(
+        big_state = "存在但为空（0 B）" if big_artifact.exists() else "不存在"
+        big_check = skip_check(
             Check("smoke-array-chunking-rescan-big", "array chunking", "skip"),
-            f"前置产物缺失：本次执行根下无 data/derived/{big_name}"
+            f"前置产物不可用：本次执行根下 data/derived/{big_name} {big_state}"
             f"（查找路径 {big_artifact}）；产物未入库、按需生成，"
             "chunking 单元面已由 tests-unit 的 test_array_chunking 离线覆盖；"
             "单独复跑：联网环境先 PYTHONPATH=. python tests/smoke_array_chunking.py --stage big "
-            "生成产物，之后本项自动转 RUN"))
+            "生成产物，之后本项自动转 RUN")
+        big_check.probe = probe_big
+        checks.append(big_check)
 
     checks.append(skip_check(
         Check("smoke-tui", "TUI", "skip"),
@@ -514,23 +632,23 @@ def main() -> int:
     if by_name["ruff-check"].layer == "run":
         run_ruff(by_name["ruff-check"])
 
-    # 汇总 + 覆盖矩阵
-    failed = [c for c in checks if c.layer == "run" and c.status == "fail"]
+    # 汇总 + 覆盖矩阵（第一遍）
+    summary, failed = summarize(checks)
+    coverage, uncovered = build_coverage(checks)
     overall = "fail" if failed else "pass"
-    summary = {
-        "run": sum(1 for c in checks if c.layer == "run"),
-        "passed": sum(1 for c in checks if c.status == "pass"),
-        "failed": len(failed),
-        "skipped": sum(1 for c in checks if c.status == "skip"),
-    }
 
-    coverage: dict[str, list[dict]] = {}
-    uncovered: list[str] = []
-    for module, names in MATRIX.items():
-        rows = [{"check": n, "status": by_name[n].status if n in by_name else "missing"} for n in names]
-        coverage[module] = rows
-        if not names or all(r["status"] in ("missing",) for r in rows):
-            uncovered.append(module)
+    # c21 两遍写法（第一遍）：先落一份**不含自查项**的报告，供自查读取 ——
+    # 自查读到的正是它将要评述的那份快照（不含自身），自指问题由此解除。
+    REPORT_PATH.write_text(json.dumps(
+        build_report(started, datetime.now(timezone.utc), overall, summary, checks, coverage, uncovered),
+        ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # c21 报告自查（条件 RUN 项；工具缺失时该项自身转 SKIP）：把结论插回 checks 后重算第二遍
+    checks.append(run_report_selfcheck(
+        Check(name="report-selfcheck", module=SELFCHECK_MODULE, layer="run"), REPORT_PATH))
+    summary, failed = summarize(checks)
+    coverage, uncovered = build_coverage(checks)
+    overall = "fail" if failed else "pass"
 
     # 控制台输出
     for c in checks:
@@ -555,28 +673,10 @@ def main() -> int:
     print(f"\n== verify_all {'全部通过（含 SKIP）' if overall == 'pass' else '存在失败'}"
           f" · 报告: {REPORT_PATH} ==")
 
-    # JSON 报告
-    finished = datetime.now(timezone.utc)
-    report = {
-        "schema": "geocode.verify-all.report.v1",
-        "started_at": started.isoformat(),
-        "finished_at": finished.isoformat(),
-        "overall": overall,
-        "summary": summary,
-        "network_allowlist": ["127.0.0.1"],  # 本轮 RUN 层唯一允许访问的主机
-        "checks": [
-            {
-                "name": c.name, "module": c.module, "layer": c.layer, "status": c.status,
-                "duration_s": c.duration_s, "log_path": c.log_path,
-                "skip_reason": c.skip_reason, "note": c.note,
-                "fail_summary": c.fail_summary, "probe": c.probe,
-            }
-            for c in checks
-        ],
-        "coverage_matrix": coverage,
-        "uncovered_modules": uncovered,
-    }
-    REPORT_PATH.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    # JSON 报告（第二遍：含自查项，整体覆盖第一版；最终报告是唯一事实源）
+    REPORT_PATH.write_text(json.dumps(
+        build_report(started, datetime.now(timezone.utc), overall, summary, checks, coverage, uncovered),
+        ensure_ascii=False, indent=2), encoding="utf-8")
 
     return 0 if overall == "pass" else 1
 
