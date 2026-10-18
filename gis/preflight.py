@@ -19,6 +19,7 @@ import importlib
 import json
 import os
 import ssl
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -36,6 +37,7 @@ from . import geoenv
 # 环境类
 ENV_PACKAGE_MISSING = "package-missing"
 ENV_GDAL_MISSING = "gdal-missing"
+ENV_NUMPY_LINALG_BROKEN = "numpy-linalg-broken"
 
 # GEE 配置类
 GEE_CREDENTIALS_MISSING = "gee-credentials-missing"
@@ -156,6 +158,104 @@ def probe_config() -> Check:
     })
 
 
+# ---------------------------------------------------------------------------
+# 探测 1.5：numpy 相关矩阵路径（必须子进程，见下）
+# ---------------------------------------------------------------------------
+
+# 子进程探测脚本。**输入必须是浮点 ndarray** —— 2026-10-18 实测：本机崩溃只在浮点数组
+# 输入下复现（3/3 次退出码 127、无 traceback），整数 ndarray 与 Python list 输入正常返回，
+# 用它们探测会得到假阴性（检查项误报通过）。np.cov / np.corrcoef 两条路径都要走到。
+_NUMPY_PROBE_SRC = r"""
+import sys
+import numpy as np
+
+rng = np.random.default_rng(12345)
+a = rng.random((2, 200))          # 浮点数组：本机崩溃的必要条件
+np.cov(a)
+np.corrcoef(a)
+sys.stdout.write("numpy-linalg-ok " + np.__version__)
+"""
+
+# 本机实测的原生致命退出码。同一个崩溃有两种可观察形态：
+#   - Python 侧 subprocess.returncode = 3228369023（无符号 0xC06D007F，Windows STATUS_DLL_NOT_FOUND 系）
+#   - Git Bash / MSYS 侧显示为 127（大退出码被截到低 7 位：0xC06D007F & 0x7F = 0x7F）
+# 两种都认，避免漏判成"普通 Python 异常"而给出错误的修法。
+NUMPY_NATIVE_CRASH_CODES = frozenset({3228369023, 127, -1073741511})  # -1073741511 = 有符号 0xC06D007F
+
+
+def check_numpy_linalg(*, timeout: float = 60.0) -> Check:
+    """
+    探测 np.cov / np.corrcoef 在本机是否可用。
+
+    **必须在子进程里探测**：该路径在本机会触发 Windows 原生致命异常
+    （0xc06d007f、退出码 127、无 Python traceback）—— 父进程内探测会连父进程一起带走，
+    检查项根本来不及返回结论。
+
+    口径（2026-10-18 用户决定）：如实反映探测结果。当前环境崩就报失败给规避写法，
+    环境修好后自动转通过 —— 不保留"即使可用也固定告警"的历史语义。
+    """
+    python = sys.executable or "python"
+    try:
+        proc = subprocess.run(
+            [python, "-c", _NUMPY_PROBE_SRC],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            # 子进程独立进程组，父进程不受其原生崩溃波及时序影响
+            encoding="utf-8",
+            errors="replace",
+        )
+    except subprocess.TimeoutExpired:
+        return Check(
+            False, ENV_NUMPY_LINALG_BROKEN,
+            "症状：numpy 相关矩阵探测超时（{:.0f}s 未返回）。\n"
+            "  原因：子进程卡死（罕见），无法排除 linalg 后端问题。\n"
+            "  影响：任何使用 np.cov / np.corrcoef 的分析脚本可能挂住而不是报错。\n"
+            "  规避：手算 z-score 公式或改用 scipy.stats.pearsonr。".format(timeout),
+            {"timeout": timeout, "python": python},
+        )
+    except OSError as e:
+        return Check(
+            False, ENV_NUMPY_LINALG_BROKEN,
+            f"症状：无法启动子进程探测（{type(e).__name__}: {e}）。\n"
+            f"  说明：期望的 Python 解释器 = {python}\n"
+            "  修法：确认该解释器存在且可执行；或在 geo 环境里运行 preflight。",
+            {"python": python, "error": str(e)},
+        )
+
+    stdout = (proc.stdout or "").strip()
+    stderr = (proc.stderr or "").strip()
+    if proc.returncode == 0 and stdout.startswith("numpy-linalg-ok"):
+        return Check(True, value={"numpy_version": stdout.split()[-1], "python": python})
+
+    # 失败：区分"原生致命退出"与"普通 Python 异常"，两者修法不同
+    native_crash = proc.returncode in NUMPY_NATIVE_CRASH_CODES or not stderr
+    if native_crash:
+        return Check(
+            False, ENV_NUMPY_LINALG_BROKEN,
+            f"症状：np.cov / np.corrcoef 在本机触发**原生致命退出**"
+            f"（退出码 {proc.returncode}、无 Python traceback）。\n"
+            "  原因：numpy 的 linalg/BLAS 后端在本机安装有问题（属 conda 环境问题，不在本仓库范围）。\n"
+            "  影响：任何计算相关矩阵的分析脚本会**静默死掉**（不是抛异常，是进程直接消失），"
+            "容易误判成脚本自己的 bug。\n"
+            "  已验证的规避写法（二选一）：\n"
+            "    # 1) 手算 z-score 公式\n"
+            "    r = ((x - x.mean()) * (y - y.mean())).mean() / (x.std() * y.std())\n"
+            "    # 2) 用 scipy\n"
+            "    from scipy.stats import pearsonr; r, p = pearsonr(x, y)\n"
+            "  说明：np.dot / np.std / 矩阵乘法等其他 linalg 路径实测正常，只有相关矩阵这条会崩。",
+            {"returncode": proc.returncode, "stderr": stderr[-2000:], "python": python},
+        )
+    return Check(
+        False, ENV_NUMPY_LINALG_BROKEN,
+        f"症状：numpy 相关矩阵探测失败（退出码 {proc.returncode}）。\n"
+        "  影响：np.cov / np.corrcoef 调用会报错。\n"
+        "  规避：手算 z-score 公式，或改用 scipy.stats.pearsonr。\n"
+        "  原始错误见 value.stderr。",
+        {"returncode": proc.returncode, "stderr": stderr[-2000:], "python": python},
+    )
+
+
 def probe_env() -> dict:
     """零网络全量快照。dockpane 刷新状态栏用这个。"""
     return {
@@ -163,6 +263,7 @@ def probe_env() -> dict:
         "geoenv": geoenv.describe(),
         "packages": probe_packages().as_dict(),
         "gdal": probe_gdal().as_dict(),
+        "numpy_linalg": check_numpy_linalg().as_dict(),
         "config": probe_config().as_dict(),
     }
 
@@ -523,6 +624,9 @@ def summarize(res: dict) -> str:
     bits.append("包:" + ("全" if p.get("ok") else "缺"))
     d = res.get("env", {}).get("gdal", {})
     bits.append("GDAL:" + (d.get("value", {}).get("version") or "缺"))
+    nl = res.get("env", {}).get("numpy_linalg") or {}
+    if nl:
+        bits.append("numpy相关矩阵:" + ("可用" if nl.get("ok") else nl.get("code", "未知")))
     if "gee_network" in res:
         bits.append("网络:" + ("通" if res["gee_network"].get("ok") else res["gee_network"].get("code")))
     return " | ".join(bits)

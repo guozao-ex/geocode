@@ -19,7 +19,11 @@ from unittest import mock
 from gis import source
 from gis import spec as spec_module
 from gis.spec import PROCESSING_VERSION, ArtifactSpec, RenderSpec, SpecError, bbox_to_geojson
-from tests.unit._helpers import GOLDEN_FINGERPRINTS, expected_p0_fingerprint
+from tests.unit._helpers import (
+    GOLDEN_FINGERPRINTS,
+    expected_p0_fingerprint,
+    make_p0_spec,
+)
 
 AOI = bbox_to_geojson(116.30, 39.95, 116.40, 40.02)
 
@@ -29,32 +33,6 @@ AOI = bbox_to_geojson(116.30, 39.95, 116.40, 40.02)
 # 把版本号替换回 2 后必须复现旧值（见 LegacyPresetsFrozenTest.test_change_surface_is_version_only）。
 P0_GOLDEN_FINGERPRINT = expected_p0_fingerprint()
 P0_GOLDEN_FINGERPRINT_VERSION_2 = GOLDEN_FINGERPRINTS[2]
-
-# P0 验收样本的参数（tests/smoke_emit.py 原样：小框 AOI + uint16 + 2024 夏季中值）。
-P0_SPEC_DICT = {
-    "id": "s2_beijing_test",
-    "asset": "COPERNICUS/S2_SR_HARMONIZED",
-    "bands": ["B4", "B3", "B2"],
-    "scale": 10,
-    "crs": "EPSG:32650",
-    "dtype": "uint16",
-    "time_range": ["2024-06-01", "2024-08-31"],
-    "reducer": "median",
-    "aoi": {
-        "type": "Polygon",
-        "coordinates": [[[116.30, 39.95], [116.40, 39.95],
-                         [116.40, 40.02], [116.30, 40.02], [116.30, 39.95]]],
-    },
-}
-
-
-def make_p0_spec(**over) -> ArtifactSpec:
-    """P0 样本 spec（本文件自带，不依赖其他测试的共享构造 —— 避免与并行 change 耦合）。"""
-    kw = dict(P0_SPEC_DICT)
-    kw.update(over)
-    render = kw.pop("render", None)          # RenderSpec 对象不参与 from_dict 的 JSON 路径
-    spec = ArtifactSpec.from_dict(kw)
-    return spec if render is None else spec.with_(render=render)
 
 NEW_ASSETS = (
     "COPERNICUS/S1_GRD",

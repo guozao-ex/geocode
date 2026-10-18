@@ -238,7 +238,10 @@ class GpkgDeliverTest(unittest.TestCase):
 
         tmp = tempfile.mkdtemp(prefix="geocode_ut_deliver_")
         self.deliver_dir = pathlib.Path(tmp)
-        patcher = mock.patch.object(osm_mod.geoenv, "DELIVER_DIR", self.deliver_dir)
+        # C15 A5：交付根改经 geoenv.data_path() → data_root()/deliver；
+        # 测试重定向 data_root（临时根下自动建 deliver/）
+        patcher = mock.patch.object(osm_mod.geoenv, "data_root",
+                                    return_value=self.deliver_dir)
         patcher.start()
         self.addCleanup(patcher.stop)
         patcher2 = mock.patch.object(osm_mod, "_endpoints",

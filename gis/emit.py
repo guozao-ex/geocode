@@ -19,10 +19,12 @@ from __future__ import annotations
 import json
 import math
 import os
+import time
 import urllib.request
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from . import export_chunks as _chunks
 from . import geoenv
 from . import qgis_bridge as _qb
 from .grid import Grid, compute_grid
@@ -41,8 +43,30 @@ MAX_DIRECT_PIXELS = 64_000_000
 # 每像素每波段按 float32(4B) + mask(1B) = 5B 计：实测 18,383,386 px × 5B = 91,916,930B，
 # 与 GEE 报的数字逐字节吻合。像素守卫（64M）管不到这个维度 —— 泰安市 30m DEM 只有
 # 18.4M 像素轻松过闸，下载时照样被 48MB 拍死（2026-10-11 真实数据运行实测）。
-MAX_DOWNLOAD_BYTES = 50_331_648          # 50,331,648 B = 48 MiB
-MAX_DOWNLOAD_BYTES_PER_PIXEL_BAND = 5
+#
+# C15：超限不再直接报错 —— 改走**分块下载 + 本地拼接**（gis/export_chunks.py）。
+# 像素守卫（MAX_DIRECT_PIXELS）从此是**直写路径**的上限：直写要求
+#   像素 ≤ 64M 且 体积 ≤ 48 MiB，任一超限都走分块。
+MAX_DOWNLOAD_BYTES = _chunks.MAX_DOWNLOAD_BYTES            # 50,331,648 B = 48 MiB
+MAX_DOWNLOAD_BYTES_PER_PIXEL_BAND = _chunks.BYTES_PER_PIXEL_BAND
+
+# 下载重试（C15 A3）：瞬时错误有界退避。总尝试次数与退避序列显式写死，
+# 不进 spec / 不进指纹（运行时决策，非产品行为）。
+# A1 真数据实测：GEE 在长任务里会连发 RemoteDisconnected / SSL EOF / HTTP 503，
+# 3 次尝试不够 —— 提到 5 次、退避拉到 2/5/15/30s。
+DOWNLOAD_ATTEMPTS = 5
+DOWNLOAD_BACKOFF_SECONDS = (2.0, 5.0, 15.0, 30.0)
+
+# 整片重试（外层）：单请求内重试耗尽后，整个分片再来一轮（重新取 URL + 重下）。
+# 进制上界：CHUNK_ATTEMPTS 次整片尝试，耗尽后走 A3 失败文案。
+CHUNK_ATTEMPTS = 3
+CHUNK_BACKOFF_SECONDS = (10.0, 45.0)
+
+# 本地文件瞬时错误重试（C15 实测：刚写下的栅格可能被 AV / 索引扫描短暂锁住，
+# GDAL 报 “Read failed” —— 重试即过）。只包住“回读本地文件”的步骤，
+# 不改变任何产物语义；退避渐进（0.5s → 2s）。
+LOCAL_IO_ATTEMPTS = 3
+LOCAL_IO_DELAYS = (0.5, 2.0)
 
 # 波段参数哨兵：单期路径沿用 spec.bands；时序堆叠路径显式传 None
 # （toBands() 后波段名是 期前缀_波段，再传 spec.bands 会 band-not-found）
@@ -201,6 +225,49 @@ def dispatch(job: Job) -> dict:
 # 公共：准备栅格文件
 # ---------------------------------------------------------------------------
 
+def _normalize_nodata(job: Job, path: Path, *, cache_hit: bool = False) -> dict | None:
+    """
+    nodata 归一 → NaN（C15 A4），带**本地瞬时错误重试**。
+
+    刚写下的栅格可能被 AV / 索引扫描短暂锁住（GDAL “Read failed”，实测 2/6 次）；
+    `cache_hit=True`（复用既有产物）时最终失败只报进度、不抛 —— 归一失败不该挡住复用；
+    下载路径（`cache_hit=False`）则抛出 —— 不能静默留下非 NaN 语义的产物。
+    """
+    last: Exception | None = None
+    for i in range(max(1, LOCAL_IO_ATTEMPTS)):
+        try:
+            return _chunks.normalize_nodata_to_nan(path)
+        except Exception as e:                 # noqa: BLE001 — 瞬时锁 / GDAL 读错误
+            last = e
+            if i + 1 < max(1, LOCAL_IO_ATTEMPTS):
+                delay = LOCAL_IO_DELAYS[min(i, len(LOCAL_IO_DELAYS) - 1)]
+                job.progress("重试", None,
+                             f"本地回读 {path.name} 失败（{type(e).__name__}: {str(e)[:80]}），"
+                             f"{delay}s 后重试")
+                time.sleep(delay)
+    if cache_hit:
+        job.progress("既有产物 nodata 归一失败", None,
+                     f"{path.name}: {type(last).__name__}: {str(last)[:120]}")
+        return None
+    assert last is not None
+    raise last
+
+
+def _reuse_cached_raster(job: Job, path: Path) -> None:
+    """
+    复用既有栅格前的 C15 A4 检查：nodata 语义必须是 NaN。
+
+    历史产物是 GEE 原始下载，nodata 为 `-inf`（float32）/ `0.0`（float64）/
+    整数哨兵；直接复用会让同一 spec 的 GeoTIFF 与 NetCDF 掩膜语义分歧
+    （A4 要求两边都是 NaN、masked read 一致）。这里就地把既有产物归一
+    （同目录 .part + 原子替换）—— 失败只报进度、不挡住复用。
+    """
+    info = _normalize_nodata(job, path, cache_hit=True)
+    if info and info.get("changed"):
+        job.progress("既有产物 nodata 归一", None,
+                     f"{path.name}: nodata {info.get('nodata')} → NaN（{info.get('dtype')}）")
+
+
 def _ensure_raster(job: Job) -> tuple[Path, Grid]:
     """
     确保磁盘上有这个 spec 的栅格，返回 (路径, 网格)。
@@ -211,6 +278,7 @@ def _ensure_raster(job: Job) -> tuple[Path, Grid]:
     grid = compute_grid(spec)
     out = _output_path(spec, "derived", ".tif")
     if out.exists() and out.stat().st_size > 4096:
+        _reuse_cached_raster(job, out)
         job.progress("复用已有栅格", 25, f"{out.name} ({out.stat().st_size/1024/1024:.1f} MB)")
         return out, grid
     return _download_to(job, out, grid), grid
@@ -218,6 +286,22 @@ def _ensure_raster(job: Job) -> tuple[Path, Grid]:
 
 def _output_path(spec: ArtifactSpec, kind: str, ext: str) -> Path:
     return geoenv.data_path(kind, f"{spec.slug}.{spec.fingerprint()[:8]}{ext}")
+
+
+def _record_cache_current(job: Job, spec: ArtifactSpec) -> None:
+    """
+    C15 A6：把「slug → 当代指纹」记进产物根的缓存索引（.cache-index.json）。
+
+    `scripts/prune_cache.py` 靠它区分当代 / 历史指纹。写入失败只报进度、
+    不抛出 —— 索引是维护性元数据，绝不能因为写不进去就毁掉一次成功的产物。
+    """
+    try:
+        from . import cache_manage
+        cache_manage.record_current(
+            geoenv.data_path("derived"), spec.slug, spec.fingerprint(),
+        )
+    except Exception as e:                     # noqa: BLE001 — 见 docstring
+        job.progress("缓存索引写入失败", None, f"{type(e).__name__}: {str(e)[:120]}")
 
 
 # ---------------------------------------------------------------------------
@@ -233,6 +317,7 @@ def emit_file(job: Job) -> dict:
     if spec.is_timeseries:
         out = _output_path(spec, "derived", ".tif")
         if out.exists() and out.stat().st_size > 4096:
+            _reuse_cached_raster(job, out)
             job.progress("已存在，跳过下载", 90, out.name)
         else:
             _download_stack_to(job, out, grid)
@@ -255,6 +340,7 @@ def emit_file(job: Job) -> dict:
         job.artifacts.append(str(out))
         size_mb = out.stat().st_size / 1024 / 1024
         job.progress("完成", 100, f"{out.name} ({size_mb:.1f} MB, {len(periods)} 期堆叠)")
+        _record_cache_current(job, spec)
 
         return {
             "exit": "file",
@@ -275,6 +361,7 @@ def emit_file(job: Job) -> dict:
 
     out = _output_path(spec, "derived", ".tif")
     if out.exists() and out.stat().st_size > 4096:
+        _reuse_cached_raster(job, out)
         job.progress("已存在，跳过下载", 90, out.name)
     else:
         _download_to(job, out, grid)
@@ -289,6 +376,7 @@ def emit_file(job: Job) -> dict:
     job.artifacts.append(str(out))
     size_mb = out.stat().st_size / 1024 / 1024
     job.progress("完成", 100, f"{out.name} ({size_mb:.1f} MB)")
+    _record_cache_current(job, spec)
 
     return {
         "exit": "file",
@@ -327,6 +415,348 @@ def _download_to(
     return out
 
 
+class ChunkAlignmentError(RuntimeError):
+    """分块返回的栅格与目标网格不对齐（错位/覆盖不足）—— 绝不凑合拼。"""
+
+
+def _retry(fn, *, job: Job, label: str, attempts: int | None = None, backoff=None):
+    """
+    有界退避重试（C15 A3）：只对瞬时错误重试，确定性错误立刻抛。
+
+    返回 `(结果, 重试次数)`。最终失败时把尝试次数/重试次数挂在异常的
+    `geocode_attempts` / `geocode_retries` 上，供分块失败文案统计。
+    """
+    n = max(1, int(DOWNLOAD_ATTEMPTS if attempts is None else attempts))
+    waits = DOWNLOAD_BACKOFF_SECONDS if backoff is None else tuple(backoff)
+    for i in range(n):
+        if i:
+            job.check_cancelled()
+        try:
+            return fn(), i
+        except BaseException as e:             # noqa: BLE001 — 分类后原样重抛
+            if i + 1 >= n or not _chunks.is_retryable_error(e):
+                for attr, val in (("geocode_attempts", i + 1), ("geocode_retries", i)):
+                    try:
+                        setattr(e, attr, val)
+                    except Exception:
+                        pass
+                raise
+            wait = float(waits[min(i, len(waits) - 1)]) if waits else 0.0
+            job.progress(
+                "重试", None,
+                f"{label}：第 {i + 1}/{n} 次尝试失败"
+                f"（{type(e).__name__}: {str(e)[:100]}），{wait:.1f}s 后重试",
+            )
+            if wait > 0:
+                time.sleep(wait)
+    raise AssertionError("unreachable")           # pragma: no cover
+
+
+def _region_4326(grid: Grid, window: dict, to_ll) -> dict:
+    """
+    像素窗口 → EPSG:4326 的**加密多边形** region（getDownloadURL 的 region 参数）。
+
+    为什么不用 bbox（C15 实测）：投影坐标下的矩形在 4326 里是曲边，
+    取它的 bbox 再交给 GEE 反投影回来，得到的 UTM bbox 会比目标窗口大
+    1–4%（实测 17680×103 的整行片 → GEE 网格是该窗口的 1.9 倍，直径 95 MB 直接撞上限）。
+    加密多边形（每边 16 段）把反投影误差压到亚米级，GEE 网格 = 窗口 + 1 px/边。
+
+    这是坐标变换，不是采样重采 —— 像素值仍然逐像元对齐（A2 实测 max|diff| = 0）。
+    """
+    x0, y0, x1, y1 = _chunks.window_bounds(grid, window)
+    pad = _chunks.CHUNK_MARGIN_PIXELS * grid.scale
+    x0, y0, x1, y1 = x0 - pad, y0 - pad, x1 + pad, y1 + pad
+    n = 16
+    ring: list[tuple[float, float]] = []
+    for k in range(n):                                  # 南边（西→东）
+        ring.append(to_ll.transform(x0 + (x1 - x0) * k / n, y0))
+    for k in range(n):                                  # 东边（南→北）
+        ring.append(to_ll.transform(x1, y0 + (y1 - y0) * k / n))
+    for k in range(n):                                  # 北边（东→西）
+        ring.append(to_ll.transform(x1 - (x1 - x0) * k / n, y1))
+    for k in range(n):                                  # 西边（北→南）
+        ring.append(to_ll.transform(x0, y1 - (y1 - y0) * k / n))
+    ring.append(ring[0])                                # 闭合环
+    return {
+        "type": "Polygon",
+        "coordinates": [[[float(lon), float(lat)] for lon, lat in ring]],
+    }
+
+
+def _image_band_names(img) -> list[str]:
+    """影像的显式波段名（掩膜带必须按名字附加；一次 EE 往返）。"""
+    return [str(n) for n in (img.bandNames().getInfo() or [])]
+
+
+def _request_bytes_per_band(img, bands) -> int:
+    """
+    单请求计费：值波段（输出 dtype + 1 B mask）+ 逐波段 byte 掩膜带（1 B + 1 B mask）。
+
+    C15 A1 追加：下载请求现在同时带掩膜带（见 export_chunks.MASK_BAND_BYTES_PER_BAND），
+    分块预算必须把它算进去 —— 否则分片会超 GEE 的 48 MiB 上限（实测直接 400）。
+    """
+    return _image_bytes_per_band(img, bands) + _chunks.MASK_BAND_BYTES_PER_BAND
+
+
+def _resolve_bands(spec: ArtifactSpec, bands) -> list[str] | None:
+    """把 bands 参数（含 `_SPEC_BANDS` 哨兵）解析成实际要请求的波段列表 / None。
+
+    band_expr 之后影像只剩表达式产出的波段，不能再按 spec.bands 去要
+    （否则报 `Image has no band named ...`）→ 返回 None（不传 bands）。
+    """
+    if bands is _SPEC_BANDS:
+        return None if spec.band_expr else (list(spec.bands) or None)
+    return list(bands) if bands else None
+
+
+def _image_bytes_per_band(img, bands: list[str] | None = None) -> int:
+    """
+    GEE 单请求的计费口径：**输出波段精度字节 + 1 B mask**。
+
+    实测（2026-10-11，C15 真数据）：
+      - float32 单波段 DEM：5 B/px（1,803×1,112 与 18,383,386 px 两处逐字节吻合）
+      - double  单波段 NDVI：8.996 B/px；double 三波段真彩色：26.98 B/px
+
+    所以**不能按 spec.dtype 猜**：真彩色 spec 写 `uint16`，GEE 实际输出 double
+    （14.1 MB 的 float32 估算 → 实际被要求 54.1 MB，第一片就拒）。
+    查不到精度时按最坏（double = 9 B）算：分片偏小只多几次请求，不会失败。
+    """
+    try:
+        info = img.bandTypes().getInfo() or {}
+    except Exception:                      # noqa: BLE001 — 查不到就按最坏算
+        return _chunks.BYTES_PER_PIXEL_BAND_UNKNOWN
+    want = set(bands) if bands else None
+    costs = [
+        _chunks.bytes_per_pixel_band((meta or {}).get("precision"))
+        for name, meta in info.items()
+        if want is None or name in want
+    ]
+    return max(costs) if costs else _chunks.BYTES_PER_PIXEL_BAND_UNKNOWN
+
+
+def _chunk_failure(
+    index: int, total: int, window: dict, n_bands: int, chunk_est: int,
+    est_total: int, limit: int, err: BaseException, spec: ArtifactSpec,
+) -> RuntimeError:
+    """A3 失败文案：片号/片数、估算体积、上限、已重试次数 + 四条出路。"""
+    attempts = int(getattr(err, "geocode_attempts", DOWNLOAD_ATTEMPTS))
+    retries = int(getattr(err, "geocode_retries", 0))
+    return RuntimeError(
+        f"分块下载失败：第 {index}/{total} 片"
+        f"（窗口 {window['width']}×{window['height']} @ 像素 "
+        f"({window['x']},{window['y']})，{n_bands} 波段，单片估算 "
+        f"{chunk_est/1048576:.1f} MB；整幅估算 {est_total/1048576:.0f} MB，"
+        f"单请求上限 {limit/1048576:.0f} MB）；已重试 {retries} 次"
+        f"（共 {attempts} 次尝试）仍失败：{type(err).__name__}: {err}\n"
+        f"  已清理分片临时文件与半成品，不留 .part。\n"
+        f"  出路（按省事排序）：\n"
+        f"    1. 放大 scale（当前 {spec.scale}m；放大一倍，体积降到 1/4）\n"
+        f"    2. 缩小 AOI\n"
+        f"    3. 该出口改用 array（emit_array 走 xee computePixels，无此上限）\n"
+        f"    4. 批处理导出 Export.image.toDrive（异步任务，未接）"
+    )
+
+
+def _fetch_chunk_with_retry(
+    job: Job, tile: Path, grid: Grid, spec: ArtifactSpec, img, win: dict,
+    *, bands, bpp: int, limit: int, index: int, total: int,
+    chunk_est: int, est_total: int, attempts: int | None, backoff, to_ll,
+) -> None:
+    """
+    单片取数（外层整片重试）：`_fetch_tif` 单请求内已有重试；这里再包一层整片重试
+    （重新取 URL + 重下），只为扛住 GEE 长任务里的连发 503/SSL EOF（A1 实测）。
+    确定性错误不重试；耗尽后原样抛出，由调用方包成 A3 失败文案。
+    """
+    for chunk_try in range(1, max(1, CHUNK_ATTEMPTS) + 1):
+        try:
+            _fetch_tif(
+                job, tile, grid, spec, img,
+                pixels=win["width"] * win["height"], bands=bands,
+                region_override=_region_4326(grid, win, to_ll),
+                max_bytes=limit, bytes_per_band=bpp,
+                attempts=attempts, backoff=backoff,
+            )
+            return
+        except Exception as e:                  # noqa: BLE001 — 分类后决定
+            if chunk_try >= max(1, CHUNK_ATTEMPTS) or not _chunks.is_retryable_error(e):
+                raise
+            delay = CHUNK_BACKOFF_SECONDS[min(chunk_try - 1, len(CHUNK_BACKOFF_SECONDS) - 1)]
+            job.progress(
+                "重试", None,
+                f"第 {index}/{total} 片整体重试（{type(e).__name__}: {str(e)[:80]}），"
+                f"{delay:.0f}s 后重来（单片估算 {chunk_est/1048576:.1f} MB / 上限 "
+                f"{limit/1048576:.0f} MB，整幅 {est_total/1048576:.0f} MB）",
+            )
+            time.sleep(delay)
+
+
+def _to_ll(grid: Grid):
+    """网格 CRS → EPSG:4326 的变换器（region 必须是经纬度几何）。"""
+    from pyproj import CRS, Transformer
+
+    return Transformer.from_crs(
+        CRS.from_user_input(grid.crs), CRS.from_epsg(4326), always_xy=True,
+    )
+
+
+def _download_chunked(
+    job: Job,
+    out_path: Path,
+    grid: Grid,
+    spec: ArtifactSpec,
+    img,
+    *,
+    bands=_SPEC_BANDS,
+    bytes_per_band: int | None = None,
+    attempts: int | None = None,
+    backoff=None,
+) -> Path:
+    """
+    C15 分块下载：目标网格切窗口 → 逐片 getDownloadURL → 本地按**目标网格**拼接。
+
+    落盘纪律：整幅写 `<out>.part`，全部成功才原子 rename —— 中途失败不留半截产物，
+    分片临时文件逐片用完即删（长任务不累占临时空间）。
+
+    对齐纪律：每片按 GEE **实际返回的 transform** 定位（允许边界余量），
+    错位/覆盖不足立即报 ChunkAlignmentError，不重采样、不猜测
+    （红线：不得另建网格）。
+    """
+    import numpy as np
+    import rasterio
+    from rasterio.transform import Affine
+    from rasterio.windows import Window
+
+    bands = _resolve_bands(spec, bands)
+    if bands is None:
+        bands = _image_band_names(img)
+    n_bands = len(bands)
+    bpp = int(bytes_per_band) if bytes_per_band else _request_bytes_per_band(img, bands)
+
+    windows = _chunks.plan_download_chunks(
+        grid.width, grid.height, n_bands,
+        max_bytes=int(MAX_DOWNLOAD_BYTES), bytes_per_pixel_band=bpp,
+    )
+    total = len(windows)
+    limit = int(MAX_DOWNLOAD_BYTES)
+    est_total = grid.width * grid.height * n_bands * bpp
+    job.progress(
+        "分块下载", 12,
+        f"{grid.width}×{grid.height} @ {grid.scale}m → {total} 片"
+        f"（{n_bands} 波段 × {bpp} B/像素计费（含掩膜带），估算 {est_total/1048576:.0f} MB"
+        f" > 直写上限 {limit/1048576:.0f} MB）",
+    )
+
+    to_ll = _to_ll(grid)
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    dst_path = out_path.with_suffix(out_path.suffix + ".part")
+    tiles: list[Path] = []
+    dst = None
+    try:
+        for i, win in enumerate(windows, 1):
+            job.check_cancelled()
+            tile = out_path.with_name(f"{out_path.name}.c{i:04d}.part")
+            tiles.append(tile)
+            chunk_est = _chunks.chunk_request_bytes(win, n_bands, bytes_per_pixel_band=bpp)
+            try:
+                _fetch_chunk_with_retry(
+                    job, tile, grid, spec, img, win, bands=bands, bpp=bpp,
+                    limit=limit, index=i, total=total, chunk_est=chunk_est,
+                    est_total=est_total, attempts=attempts, backoff=backoff,
+                    to_ll=to_ll,
+                )
+            except Exception as e:              # noqa: BLE001 — 统一成 A3 失败文案
+                raise _chunk_failure(
+                    i, total, win, n_bands, chunk_est, est_total, limit, e, spec,
+                ) from e
+
+            # 本地回读带瞬时错误重试（刚下载的分片可能被 AV/索引短暂锁住）
+            for io_attempt in range(1, max(1, LOCAL_IO_ATTEMPTS) + 1):
+                try:
+                    with rasterio.open(tile) as src:
+                        loc = _chunks.locate_actual_window(
+                            grid, win, transform=src.transform,
+                            size=(src.width, src.height),
+                        )
+                        if loc is None:
+                            raise ChunkAlignmentError(
+                                f"分块下载失败：第 {i}/{total} 片返回的栅格与目标网格不对齐 —— "
+                                f"实际 {src.width}×{src.height} @ {tuple(src.transform)[:6]}，"
+                                f"目标窗口 {win['width']}×{win['height']} @ "
+                                f"({win['x']},{win['y']})，网格 {grid.width}×{grid.height} / "
+                                f"{grid.scale}m / {grid.crs}。\n"
+                                "  这属于 GEE 侧网格吸附异常；不重采样凑合，请重跑或改用 array 出口。"
+                            )
+                        col0, row0, bw, bh = loc
+                        block = src.read(window=Window(col0, row0, bw, bh))
+                        if dst is None:
+                            dtype = src.dtypes[0]
+                            if not np.issubdtype(np.dtype(dtype), np.floating):
+                                dtype = "float32"        # NaN 需要浮点容器
+                            dst = rasterio.open(
+                                dst_path, "w", driver="GTiff",
+                                width=grid.width, height=grid.height, count=n_bands,
+                                dtype=dtype, crs=grid.crs,
+                                transform=Affine(
+                                    grid.scale, 0.0, grid.xmin,
+                                    0.0, -grid.scale, grid.ymax,
+                                ),
+                                nodata=float("nan"),
+                                tiled=True, blockxsize=256, blockysize=256,
+                                compress="deflate",
+                            )
+                            for k, name in enumerate(src.descriptions or (), start=1):
+                                if name and k <= n_bands:
+                                    dst.set_band_description(k, name)
+                        # C15 A4 + A1 修正：多波段必须用**整文件级**哨兵判据
+                        # （单波段判据会把真值恰为 0 的像素误抹，A1 实测 7/165.4M）
+                        dst.write(
+                            _chunks.coerce_nan_stack(block, src.nodata),
+                            window=Window(win["x"], win["y"],
+                                          win["width"], win["height"]),
+                        )
+                    break
+                except Exception as e:          # noqa: BLE001 — 本地瞬时读锁
+                    if io_attempt >= max(1, LOCAL_IO_ATTEMPTS):
+                        raise
+                    delay = LOCAL_IO_DELAYS[min(io_attempt - 1, len(LOCAL_IO_DELAYS) - 1)]
+                    job.progress(
+                        "重试", None,
+                        f"第 {i}/{total} 片本地回读失败（{type(e).__name__}: "
+                        f"{str(e)[:80]}），{delay}s 后重试",
+                    )
+                    time.sleep(delay)
+            # 用完即删：分片临时文件不随片数累积（否则大网格长任务会攥出 GB 级临时空间）
+            tile.unlink(missing_ok=True)
+            tile.with_name(tile.name + ".part").unlink(missing_ok=True)
+            job.progress(
+                "分块下载", 12 + 76 * i // total,
+                f"片 {i}/{total}（{win['width']}×{win['height']}）",
+            )
+
+        if dst is None:                            # pragma: no cover — 防御
+            raise RuntimeError("分块下载没有产出任何分片（内部错误）")
+        dst.close()
+        dst = None
+        dst_path.replace(out_path)
+    except BaseException:
+        if dst is not None:
+            try:
+                dst.close()
+            except Exception:
+                pass
+        dst_path.unlink(missing_ok=True)
+        raise
+    finally:
+        for t in tiles:
+            t.unlink(missing_ok=True)
+            t.with_name(t.name + ".part").unlink(missing_ok=True)
+
+    job.progress("落盘完成", 92,
+                 f"{out_path.name} ({out_path.stat().st_size/1048576:.1f} MB, {total} 片拼接)")
+    return out_path
+
+
 def _fetch_tif(
     job: Job,
     out_path: Path,
@@ -336,6 +766,11 @@ def _fetch_tif(
     *,
     pixels: int | None = None,
     bands=_SPEC_BANDS,
+    region_override: dict | tuple[float, float, float, float] | None = None,
+    max_bytes: int | None = None,
+    bytes_per_band: int | None = None,
+    attempts: int | None = None,
+    backoff=None,
 ) -> Path:
     """
     getDownloadURL 单请求核心：region/params → 下载 → 原子落 out_path。
@@ -344,8 +779,33 @@ def _fetch_tif(
     .clip(aoi) footprint 的巧合，加云掩膜后 updateMask 丢了 footprint 才暴露。
     ⚠️ bands 必须是列表（json.dumps 出来会被当成单个波段名）。
     bands 传 _SPEC_BANDS 哨兵 = 沿用 spec.bands；显式 None = 不传（吃全部波段）。
+
+    C15 路径选择：直写要求 **像素 ≤ MAX_DIRECT_PIXELS 且 估算体积 ≤ 48 MiB**；
+    任一超限 → `_download_chunked`（分块 + 本地拼接）。分片调用自带
+    `region_override`（片窗口）与 `max_bytes`（单片预算），不再递归分块。
     """
     est = pixels if pixels is not None else grid.width * grid.height
+    # 波段选择与计费口径（band_expr / bands=None 也要落到**显式波段名**：
+    # 掩膜带必须按名字附加，不能再走「不传 bands 吃全部波段」）
+    band_sel = _resolve_bands(spec, bands)
+    if band_sel is None:
+        band_sel = _image_band_names(img)
+    n_bands_est = len(band_sel)
+    bpp = int(bytes_per_band) if bytes_per_band else _request_bytes_per_band(img, band_sel)
+    limit = int(MAX_DOWNLOAD_BYTES if max_bytes is None else max_bytes)
+    est_download = est * n_bands_est * bpp
+
+    # --- 路径选择（C15）---------------------------------------------------
+    # 直写路径的两道守卫（像素 64M / 字节 48 MiB）都是"直写"的上限：
+    # 任一超限 → 分块下载 + 本地拼接（不再直接报错）。
+    # ⚠️ 必须先判分块、再判像素守卫 —— 否则 165.4M 像素的真彩色在像素守卫
+    #    处就被拒，永远到不了分块路径（A1 验收正是这个规模）。
+    if region_override is None and (est > MAX_DIRECT_PIXELS or est_download > limit):
+        return _download_chunked(
+            job, out_path, grid, spec, img,
+            bands=band_sel, bytes_per_band=bpp, attempts=attempts, backoff=backoff,
+        )
+
     if est > MAX_DIRECT_PIXELS:
         raise ValueError(
             f"网格太大，不适合直下：{grid.width}×{grid.height} = {est/1e6:.1f} 百万像素，"
@@ -358,16 +818,12 @@ def _fetch_tif(
             f"而非『下载重计算结果』。"
         )
 
-    # 字节维度守卫：像素数守卫放行的网格，仍可能被 GEE 的 48MB 单请求上限拒掉
-    n_bands_est = 1 if spec.band_expr else (
-        len(bands) if bands not in (_SPEC_BANDS, None) else (len(spec.bands) if spec.bands else 1))
-    est_download = est * n_bands_est * MAX_DOWNLOAD_BYTES_PER_PIXEL_BAND
-    if est_download > MAX_DOWNLOAD_BYTES:
+    # 单片字节守卫（分片调用走这里）：体积仍超限 = 分块预算被外部调小
+    if est_download > limit:
         raise ValueError(
-            f"下载体积估算 {est_download/1048576:.1f} MB 超 GEE 单次请求上限 "
-            f"{MAX_DOWNLOAD_BYTES/1048576:.0f} MB"
-            f"（{grid.width}×{grid.height} × {n_bands_est} 波段 × "
-            f"{MAX_DOWNLOAD_BYTES_PER_PIXEL_BAND} B/像素）。\n"
+            f"下载体积估算 {est_download/1048576:.1f} MB 超单请求上限 "
+            f"{limit/1048576:.1f} MB"
+            f"（{grid.width}×{grid.height} × {n_bands_est} 波段 × {bpp} B/像素（含掩膜带））。\n"
             f"  出路（按省事排序）：\n"
             f"    1. 放大 scale（当前 {spec.scale}m；放大一倍，体积降到 1/4）\n"
             f"    2. 缩小 AOI（按区县切分，产物本地拼接）\n"
@@ -376,13 +832,24 @@ def _fetch_tif(
         )
 
     job.progress("申请下载链接", 15, f"{grid.width}×{grid.height} @ {grid.scale}m")
-    from .spec import aoi_bbox as _aoi_bbox
-    region = list(_aoi_bbox(spec.aoi) or ())
+    if region_override is not None:
+        region = region_override
+    else:
+        from .spec import aoi_bbox as _aoi_bbox
+        region = list(_aoi_bbox(spec.aoi) or ())
     if not region:
         raise ValueError(
             "spec.aoi 为空，无法构造下载 region。\n"
             "  getDownloadURL 需要 EPSG:4326 的 (west, south, east, north)。"
         )
+    # C15 A1 追加：值波段 + 逐波段 byte 掩膜带同请求下载（同一趟）。
+    # 掩膜带是「真值 0 vs 哨兵 0」的唯一可靠区分来源（单波段 float64 尤其）。
+    # ⚠️ 必须 `gt(0).byte()` 而不是 `byte()`：AOI 边界的**半覆盖像素**掩膜是小数
+    # （如 0.5），直接转 byte 会截断成 0 而误抹（A4 实测多抹 1215 px）。
+    mask_names = [_chunks.mask_band_name(b) for b in band_sel]
+    value_sel = img.select(list(band_sel))
+    msk = value_sel.mask()
+    req_img = value_sel.addBands(msk.gt(0).byte().rename(mask_names))
     params = {
         "name": spec.slug,
         "scale": grid.scale,
@@ -390,16 +857,16 @@ def _fetch_tif(
         "region": region,                     # 经纬度 bbox
         "format": "GEO_TIFF",
         "filePerBand": False,
+        "bands": list(band_sel) + mask_names,
     }
-    if bands is _SPEC_BANDS:
-        # band_expr 之后影像只剩表达式产出的波段（名字由 GEE 取，如 "(B8-B4)/(B8+B4)" → "B8"），
-        # 再按 spec.bands 去要会报 "Image has no band named B4"（2026-10-11 实测）⇒ 不传 bands。
-        bands = None if spec.band_expr else (list(spec.bands) if spec.bands else None)
-    if bands:
-        params["bands"] = list(bands)
     job.check_cancelled()
 
-    url = img.getDownloadURL(params)
+    url, n_url_retries = _retry(
+        lambda: req_img.getDownloadURL(params), job=job, label="申请下载链接",
+        attempts=attempts, backoff=backoff,
+    )
+    if n_url_retries:
+        job.progress("申请下载链接", 15, f"重试 {n_url_retries} 次后成功")
 
     job.progress("下载中", 30, out_path.name)
     # 临时文件放**目标同目录**：
@@ -409,8 +876,13 @@ def _fetch_tif(
     out_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = out_path.with_suffix(out_path.suffix + ".part")
     try:
-        _download(url, tmp, job)
+        _retry(lambda: _download(url, tmp, job), job=job, label="下载",
+               attempts=attempts, backoff=backoff)
         job.check_cancelled()
+        # C15 A1 追加：用**真实掩膜带**定 NaN 并丢弃掩膜带（比哨兵猜测可靠：
+        # 单波段 float64 的哨兵 0.0 与真值 0 在 TIFF 里无法区分）。
+        # 在 .part 上做，rename 即“发布”。
+        _chunks.collapse_mask_bands(tmp, n_bands_est)
         tmp.replace(out_path)
     except BaseException:
         tmp.unlink(missing_ok=True)
@@ -493,7 +965,9 @@ def _merge_stack(
 
     with rasterio.open(period_files[0]) as p0:
         dtype = p0.dtypes[0]
-        nodata = p0.nodata
+        # C15 A4：期文件已由 _fetch_tif 归一为 NaN；这里强制 NaN，
+        # 防止历史期产物残留 -inf / 0 哨兵渗进堆叠产物
+        nodata = float("nan")
 
     descriptions = [
         f"{ps.replace('-', '')}_{bd}"
@@ -531,7 +1005,10 @@ def _merge_stack(
                         dst_ds.set_band_description(k, descriptions[k - 1])
 
 
-def _download(url: str, dest: Path, job: Job) -> None:
+def _download(url: str, dest: Path, job: Job, *,
+              pct_lo: float = 30.0, pct_hi: float = 88.0,
+              label: str = "下载中") -> None:
+    """单次 HTTP 下载 → dest。进度区间可参数化（分块路径每片一段，不互相抢进度）。"""
     req = urllib.request.Request(url, headers={"User-Agent": "geocode/0.1"})
     with urllib.request.urlopen(req, timeout=600) as r:
         total = int(r.headers.get("Content-Length") or 0)
@@ -546,13 +1023,20 @@ def _download(url: str, dest: Path, job: Job) -> None:
                 f.write(chunk)
                 done += len(chunk)
                 if total:
-                    pct = 30 + (done / total) * 58
+                    pct = pct_lo + (done / total) * (pct_hi - pct_lo)
                     if int(pct) != last:
                         last = int(pct)
-                        job.progress("下载中", pct, f"{done/1048576:.1f} / {total/1048576:.1f} MB")
+                        job.progress(label, pct, f"{done/1048576:.1f} / {total/1048576:.1f} MB")
                 else:
-                    job.progress("下载中", None, f"{done/1048576:.1f} MB")
-    if dest.stat().st_size < 4096:
+                    job.progress(label, None, f"{done/1048576:.1f} MB")
+    # ⚠️ C15 实测（A1 第 71/98 片）：连接提前关闭时 `HTTPResponse.read(amt)` 会**静默返回
+    # 空**（不抛 IncompleteRead），于是截断的 GeoTIFF 落到磁盘，直到 GDAL 读它才报
+    # “Read failed”—— 而且回读重试对截断文件永远无效。有 Content-Length 就必须核对。
+    got = dest.stat().st_size
+    if total and got != total:
+        from http.client import IncompleteRead
+        raise IncompleteRead(bytes(got), total - got)
+    if got < 4096:
         head = dest.read_bytes()
         if head.lstrip().startswith((b"{", b"[")):
             raise RuntimeError(
@@ -667,6 +1151,7 @@ def emit_array(job: Job) -> dict:
     job.artifacts.append(str(out))
     nbytes = out.stat().st_size
     job.progress("完成", 100, f"{out.name} ({nbytes/1048576:.1f} MB)")
+    _record_cache_current(job, spec)
 
     return {
         "exit": "array",
@@ -881,13 +1366,27 @@ def _compute_array_chunked_to_ncdf(
                     y1 = min(y0 + h_blk, h_total)
                     for x0 in range(0, w_total, w_blk):
                         x1 = min(x0 + w_blk, w_total)
-                        for b in bands:
-                            block = ds[b].isel(
-                                time=slice(t0, t1), y=slice(y0, y1), x=slice(x0, x1),
-                            ).values
-                            f.variables[b][t0:t1, y0:y1, x0:x1] = np.asarray(
-                                block, dtype=np.float32,
-                            )
+
+                        # 单块取数包一层有界重试（与下载路径同口径，复用 _retry 的
+                        # 瞬时错误分类）。实测教训（A1 第 6 次，2026-10-12）：本机
+                        # 代理瞬时拒连（`WinError 10061`）让第 29/66 块当场失败，
+                        # 而一块值数分钟 GEE 渲染 —— 瞬时抖动必须能自愈。
+                        # 重放安全：块内逐波段写回同一区间，重复写入幂等。
+                        def _fetch_block(t0=t0, t1=t1, y0=y0, y1=y1,
+                                         x0=x0, x1=x1) -> None:
+                            for b in bands:
+                                block = ds[b].isel(
+                                    time=slice(t0, t1),
+                                    y=slice(y0, y1), x=slice(x0, x1),
+                                ).values
+                                f.variables[b][t0:t1, y0:y1, x0:x1] = np.asarray(
+                                    block, dtype=np.float32,
+                                )
+
+                        _retry(
+                            _fetch_block, job=job,
+                            label=f"分块拉取 块 {done + 1}/{n_blocks}",
+                        )
                         done += 1
                         job.check_cancelled()
                         job.progress(
@@ -1100,6 +1599,7 @@ def emit_map(job: Job) -> dict:
         )
 
     job.progress("完成", 100, f"{len(results['artifacts'])} 个产物")
+    _record_cache_current(job, spec)
     return results
 
 

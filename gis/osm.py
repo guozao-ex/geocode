@@ -450,7 +450,7 @@ def deliver_gpkg(gdf, *, query_id: str, hash8: str, sidecar: dict) -> tuple[Path
 
 def _find_cached(query_id: str, cdigest: str) -> Path | None:
     """按 sidecar 里的 cache_digest 找既有交付（同查询同 AOI → 复用）。"""
-    deliver = geoenv.DELIVER_DIR
+    deliver = geoenv.data_path("deliver")   # C15 A5：随 paths.data_dir 覆盖
     for side in sorted(deliver.glob(f"{query_id}.*.json")):
         try:
             meta = json.loads(side.read_text(encoding="utf-8"))

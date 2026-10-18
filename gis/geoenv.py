@@ -20,6 +20,8 @@ from pathlib import Path
 # gis/geoenv.py -> gis/ -> 项目根
 ROOT = Path(__file__).resolve().parent.parent
 
+# 缺省产物根：仓库 data/（C15 A5 起可用 geocode.json: paths.data_dir 覆盖，
+# 研究项目把产物指到自己的工作目录，不再需要手工 cp）
 DATA_DIR = ROOT / "data"
 RAW_DIR = DATA_DIR / "raw"          # 原始下载，不手改
 DERIVED_DIR = DATA_DIR / "derived"  # 中间产物
@@ -37,11 +39,35 @@ for _d in (DATA_DIR, RAW_DIR, DERIVED_DIR, DELIVER_DIR, PROJECTS_DIR, CACHE_DIR,
 DATA_KINDS = ("raw", "derived", "deliver")
 
 
+def data_root() -> Path:
+    """
+    产物根目录（C15 A5）：`geocode.json: paths.data_dir` 覆盖，缺省＝仓库 `data/`。
+
+    - 相对路径按仓库根解析（写 `D:/gis_zone/proj` 或 `work/products` 都行）；
+    - 每次调用重读配置：改了 geocode.json 不必重启进程；
+    - 配置缺失/损坏/值为空 → 回退仓库 `data/`（历史行为逐字节不变）。
+
+    注：`.cache/` 与 `logs/` 仍在仓库根，不随 data_dir 跑 ——
+    缓存与日志是工具运行态，不是研究产物（C15 D3）。
+    """
+    raw = ""
+    try:
+        raw = str((load_config().get("paths") or {}).get("data_dir") or "").strip()
+    except Exception:                      # noqa: BLE001 — 配置坏了不该挡住产物路径
+        raw = ""
+    if not raw:
+        return DATA_DIR
+    p = Path(raw).expanduser()
+    if not p.is_absolute():
+        p = ROOT / p
+    return p
+
+
 def data_path(kind: str, *parts: str) -> Path:
     """data_path('deliver', 'aoi_ndvi.gpkg') -> 落在交付目录，并建好父目录。"""
     if kind not in DATA_KINDS:
         raise ValueError(f"kind 必须是 {DATA_KINDS} 之一，收到 {kind!r}")
-    p = {"raw": RAW_DIR, "derived": DERIVED_DIR, "deliver": DELIVER_DIR}[kind]
+    p = data_root() / kind
     for part in parts[:-1]:
         p = p / part
     p.mkdir(parents=True, exist_ok=True)
@@ -113,6 +139,9 @@ DEFAULT_CONFIG = {
     },
     "gdal": {
         "bin_dir": "",          # GDAL CLI 目录（可选；留空则用 conda 自带的）
+    },
+    "paths": {
+        "data_dir": "",         # 产物根覆盖（C15 A5）；留空 = 仓库 data/（历史行为）
     },
     "server": {
         "host": "127.0.0.1",
@@ -280,6 +309,7 @@ def describe() -> dict:
         "gee_credentials_present": gee_credentials_present(),
         "config": str(CONFIG_PATH),
         "config_exists": CONFIG_PATH.exists(),
+        "data_root": str(data_root()),          # C15 A5：产物根（可被 paths.data_dir 覆盖）
     }
 
 
