@@ -1,0 +1,463 @@
+schema: comet.native.v4
+name: c19-verify-report-drift
+language: zh-CN
+phase: archive
+status: done
+state_version: 8
+brief: brief.md
+document_constraints_version: 3
+shape_confirmation_hash: 66250509e6b9ff952e4c610c8cda123d4c5739ad2a72016d3ab513137727cdea
+spec_changes: []
+workspace:
+  isolation: worktree
+  change_branch: comet/c19-verify-report-drift
+  target_branch: main
+  finish: merge
+loop:
+  stage: done
+  goal_cycle: 1
+  iteration: 1
+  attempt: 1
+  retry_epoch: 0
+  failed_iteration_count: 0
+  no_progress_count: 0
+  execution_failure_count: 0
+  previous_unresolved_ids: []
+  next_action: null
+acceptance:
+  - id: A1
+    source: brief.md
+    text: "A1: `tools/verify_facts_check.py` 在「报告与盘上事实一致」时退出码 0、零违规；人为制造一处违规 （把某条
+      `skip_reason` 改成与盘上相反的说法）后，退出码 1，且输出能指出是**哪个检查项**的**哪条断言**失败。
+      破坏性自证：不只给「全对时通过」的证据，还要保留「错的时候真的会红」的前后对照输出。"
+    result: passed
+    reason:
+      text: 独立复跑：worktree 报告 logs/verify_all_report.json（13 项）→ EXIT=0，stdout「全部通过：13
+        个检查项在 G1-G4 / P1-P7 上零违规」。自建 doctored 副本（仅把 smoke-map-renderers-qgis 的
+        skip_reason 改成「已命中…在盘」，盘上实为空）→ EXIT=1，--json 精确点名
+        {"id":"P5","check":"smoke-map-renderers-qgis","assertion":"cache_probe
+        措辞与盘上事实一致","message":"前置产物缺失（data/derived/s2_beijing_test.b91c09c9.tif：exists=False，size=0
+        B，阈值 4096 B），但 skip_reason 出现「命中」"}；把同一副本措辞还原为真实文本 → 回到
+        EXIT=0，前后对照两侧齐备。另做反向失配：--facts-root D:/DEV/geocode 时同一报告声称「不存在」而主工作区盘上确有
+        4633924 B 该产物 → EXIT=1、2 条 P5 点名 qgis 与 arcpy；主工作区 2026-10-14 旧报告（缺
+        probe 字段）→ EXIT=1、12 条 P1 逐项点名。Builder 的 c19_a1_doctored.json 我单独复跑同样
+        EXIT=1、同一条 P5。
+      truncated: false
+  - id: A2
+    source: brief.md
+    text: "A2: `tools/verify_report_diff.py` 对两份相同报告判「无漂移」（退出 0）；对构造出差异的两份 （某项
+      run→skip、耗时翻倍、`probe.hit` 翻转）退出 1，且 `--json` 输出**逐项列出差异类别**。"
+    result: passed
+    reason:
+      text: 同一份报告自比 → EXIT=0（「无漂移：检查项集合、层位、状态、summary 计数、耗时与 probe 判据完全一致」）。自建
+        current/baseline（qgis skip→run + 状态 skip→pass + probe exists/hit
+        false→true，tests-unit 20.7s→45.0s，summary 同步改）→ EXIT=1，--json
+        逐项列出：layer_changes=[{smoke-map-renderers-qgis, skip→run}]、status_changes
+        1、duration_drifts=[{tests-unit, from 20.7, to 45.0, delta 24.3, ratio
+        2.174,
+        slower}]、probe_changes=[{exists,false→true},{hit,false→true}]、summary_changes
+        3。Builder 的 c19_a2_drifted.json 复跑同样 EXIT=1，给出 run→skip
+        方向（daemon-endpoint-probe run→skip）与耗时翻倍（20.7→45.5，2.198x slower）；反向
+        probe hit true→false 亦被抓到；阈值「且」语义（0.1→0.3s 不算漂移）经用例与 393 例全绿共同确认。
+      truncated: false
+  - id: A3
+    source: brief.md
+    text: "A3: 两个工具都不发起网络请求（AST 级证据）；`tests/unit` 新增用例全绿、既有 352 个用例零回归 （`python -m
+      unittest discover -s tests/unit` 全绿）；`uvx --offline ruff@0.17.0 check`
+      零告警。"
+    result: passed
+    reason:
+      text: 自写 AST 扫描（独立于用例）：tools/verify_facts_check.py 仅导入
+        __future__/argparse/json/re/subprocess/sys/pathlib，tools/verify_report_diff.py
+        仅 __future__/argparse/json/sys/pathlib，banned_hits=[]，且
+        urlopen/socket/connect/HTTPConnection/urlretrieve 等符号零命中；唯一外部进程调用是
+        facts_check 的只读 git rev-parse --git-common-dir（超时 20s，非网络，失败静默回落）。我独立重跑
+        python -m unittest discover -s tests/unit：Ran 393 tests, OK
+        (skipped=10)，exit 0；新文件单独跑 Ran 41 tests OK；24 个既有文件 def test_ 计数恰为
+        352，10 个 skip 全部来自既有 test_pro_addin.py 的 skipUnless，新文件无 skip。uvx
+        --offline ruff@0.17.0 check --no-cache . → All checks passed!，exit 0（与
+        Runtime 记录一致；加 --no-cache 以免写工作区缓存）。
+      truncated: false
+  - id: A4
+    source: brief.md
+    text: "A4: 两个工具对「报告文件不存在 / 非 JSON / 缺 schema 必需字段」的输入给出**可读错误**与退出码 2
+      （Q4=(a)），不抛裸 traceback、不影响调用方脚本继续执行。"
+    result: passed
+    reason:
+      text: '自建 10 组损坏输入独立复跑全部 EXIT=2：diff 工具（文件不存在／非 JSON／缺 summary／schema 不符）、facts
+        工具（文件不存在／非 JSON --json／缺 checks／schema 不符／--facts-root 非目录）。stderr
+        为单行可读中文，含文件绝对路径与 JSON 定位（「第 1 行第 3 列」）；--json 时 stdout 另给 {"ok": false,
+        "error": …}；全量扫描无任何 Traceback；exit 2 后同一 shell
+        继续执行后续命令（caller_still_alive=yes）。顶层必需字段口径为 schema/checks/summary，与
+        Q4=(a) 文字一致；逐项字段缺失（如 checks 项缺 probe 键）按断言违规判 1 而非 2，属设计口径，不构成 A4 缺口。'
+      truncated: false
+  - id: A5
+    source: brief.md
+    text: "A5: 不修改 `tests/verify_all.py`、`gis/` 全部、`tests/smoke_*.py`、`tests/unit/`
+      既有用例 （`git diff` 为空）；`PROCESSING_VERSION` 与金指纹未动；`docs/comet/specs/**` 零
+      diff。"
+    result: passed
+    reason:
+      text: git diff --name-only -- gis/ tests/verify_all.py 'tests/smoke_*.py'
+        tests/unit/ README.md docs/comet/specs/ 输出 0 行，main...HEAD 区间同样 0 行；git
+        status --porcelain 恰为 ?? docs/comet/changes/、??
+        tests/unit/test_verify_report_tools.py、?? tools/（--untracked-files=all
+        展开为 brief.md、comet-state.yaml、新用例、tools/README.md 与两个工具），无 M/D/A；git
+        diff --cached 为空。gis/spec.py:45 PROCESSING_VERSION = 3
+        未动；tests/unit/_helpers.py:45 金指纹仍 "b91c09c9c6451c16" 且零
+        diff；docs/comet/specs/（17 文件）零 diff 零新增；worktree HEAD = main =
+        2511389f6d51ba2b61bd5017048642771829cc06。brief 第 110
+        行确有「不改变产品行为：仅新增两个独立只读开发者工具与离线用例」豁免声明，change 目录 specs/ 无文件、无发布面 Spec
+        目标，与该豁免自洽。
+      truncated: false
+  - id: A6
+    source: brief.md
+    text: "A6: 两个工具各自带 `--help` 与模块 docstring 用法示例，并有 `tools/README.md`（Q5=(a)），
+      内容至少覆盖：典型调用、退出码表、`--json` 输出字段说明、以及在「主工作区 / worktree」两种情形下的 事实根差异（worktree
+      无 `data/`，缓存探测必然 miss）。"
+    result: passed
+    reason:
+      text: '两个工具 --help 均 EXIT=0
+        并列出全部参数（facts_check：report/--facts-root/--json；diff：current/baseline/--json/--duration-ratio
+        2.0/--duration-abs-s 5.0）；两份模块 docstring
+        都含「用法」段与示例命令行。tools/README.md（151 行）覆盖四项要求：典型调用（两工具各 2-3 条示例）、退出码表（0/1/2
+        双工具对照 + 2 的覆盖清单）、--json 说明（categories 六类键名与含义、probe_changes
+        字段清单、facts_check 逐条 violations 与 G1-G4/P1-P7 断言 ID 表、错误态 {"ok": false,
+        "error": ...}）、以及「主工作区 / worktree 事实根差异」（三级回落 + git --git-common-dir
+        推主工作区根 + linked worktree 无 data/ 故 cache_probe 必然 hit=false、跨根核对会红）。'
+      truncated: false
+builder_handoff:
+  candidate_id: ae0c4407-6fba-4473-80f5-ff2510e967ef
+  identity_provider: skill-coordinated
+  builder_execution_ref: skill-coordinated:builder:5474d186-c6c7-4c39-a152-655f6f9cb601
+  iteration: 1
+  summary:
+    text: c19 新增两个独立的只读报告核查工具与一套离线用例：tools/verify_report_diff.py（两份
+      verify_all_report.json 的漂移对比，覆盖检查项集合增删/层位 run<->skip/状态/summary
+      计数/耗时超阈/probe 判据变化，--json，退出码
+      0/1/2）、tools/verify_facts_check.py（报告措辞·计数·层位·probe 类型 vs 盘上事实，G1-G4 +
+      P1-P7 共 11 条断言，退出码
+      0/1/2）、tools/README.md（用法说明）、tests/unit/test_verify_report_tools.py（41
+      个离线用例，含 tools/*.py 的 AST 禁网扫描）。按 Shape 裁决：新建 tools/ 顶层目录；耗时漂移「倍数>=2.0 且
+      绝对差>5s」同时满足；走不改变产品行为豁免、零发布面 spec 改动；facts check 退出码扩展 0/1/2；事实根三级回落 + git
+      解析主工作区根。开发期实跑：tests/unit 全量 393 例 OK（既有 352 + 新增 41，skipped=10）、uvx
+      --offline ruff@0.17.0 check 零告警、tests/verify_all.py 在 worktree 内一条命令跑通并生成带
+      probe 的报告（RUN 4 PASS / SKIP 9）。破坏性自证齐备：facts check 对一致报告退 0，对人为反转措辞退 1
+      并点名检查项与断言；diff 对相同报告退 0，对构造漂移（run->skip + 耗时翻倍 + probe.hit 翻转）退 1 并逐类别列出；5
+      例损坏输入全部退 2 且无裸 traceback。既有源码零 diff（gis/
+      全部、tests/verify_all.py、tests/smoke_*.py、tests/unit/
+      既有用例、README.md、docs/comet/specs/** 均无改动，PROCESSING_VERSION=3 与金指纹未动）。
+    truncated: false
+  addressed_acceptance_ids:
+    - A1
+    - A2
+    - A3
+    - A4
+    - A5
+    - A6
+  acceptance_review:
+    - id: A1
+      status: implemented-with-evidence
+      evidence:
+        - logs/acceptance/c19_a1_e1_consistent.txt —— 对 worktree 内新生成的
+          logs/verify_all_report.json（13 项、带 probe）判「全部通过：13 个检查项在 G1-G4 / P1-P7
+          上零违规」，退出码 0
+        - logs/acceptance/c19_a1_e2_doctored.txt —— 把 smoke-map-renderers-qgis 的
+          skip_reason 人为改成与盘上相反（产物缺失却声称「已命中…在盘」）后退出码 1，违规条目点名
+          id=P5、check=smoke-map-renderers-qgis、assertion=「cache_probe
+          措辞与盘上事实一致」，并附盘上证据（exists=False/size=0 B/阈值 4096 B）
+        - logs/acceptance/c19_a1_e3_stale_main.txt —— 对主工作区那份 2026-10-14 的旧报告（无
+          probe 字段）退出码 1，12 条 P1
+        - logs/acceptance/c19_a1_e4_cross_root.txt —— 同一份 worktree 报告改用
+          --facts-root D:/DEV/geocode 核对，2 条 P5（主工作区确有余而报告称不存在）
+        - tests/unit/test_verify_report_tools.py 的 FactsCheckAssertionTest /
+          FactsCheckCliTest —— 措辞两个方向的违规都覆盖，并含「产物确实缺失时说未命中不得误报」的反向用例
+      note: verify_facts_check.py 实现 G1-G4（summary 计数自洽）与 P1-P7（probe 类型/层位取值/RUN
+        层真实状态与正耗时/SKIP 层零耗时/cache_probe 措辞 vs 盘上事实/「不在主工作区」断言 vs
+        主工作区盘上事实/probe.hit 与层位自洽），每条违规都带
+        id、检查项名、断言文本与证据。破坏性自证用副本实施（logs/acceptance/c19_a1_doctored.json），真件与真实产物零改动。
+    - id: A2
+      status: implemented-with-evidence
+      evidence:
+        - logs/acceptance/c19_a2_e1_no_drift.txt ——
+          同一份报告对自身，输出「无漂移：检查项集合、层位、状态、summary 计数、耗时与 probe 判据完全一致」，退出码 0
+        - logs/acceptance/c19_a2_e2_constructed_drift.txt ——
+          构造漂移（daemon-endpoint-probe run->skip、tests-unit 20.7s->45.5s、qgis
+          probe.hit/exists false->true）后退出码 1，--json 的 categories 逐项列出
+          layer_changes(1)/status_changes(1)/duration_drifts(1，ratio=2.198、direction=slower)/probe_changes(2：exists
+          与 hit)；counts 汇总 4 处
+        - logs/acceptance/c19_a2_e3_real_c14_baseline.txt —— 对主工作区真实的两份报告（当前 vs
+          c14 基线）退出码 1，5 处漂移
+        - tests/unit/test_verify_report_tools.py 的 ReportDiffToolTest ——
+          覆盖六类差异、阈值「且」语义（0.1s->0.3s 不算漂移）、阈值可配、probe.size_bytes
+          变化不算判据变化、以及各类损坏输入的退出码 2
+      note: verify_report_diff.py 覆盖 brief 要求的全部差异类别并以 --json 输出
+        categories/counts/drift；耗时漂移按 Q2
+        裁决「倍数与绝对差同时越阈」，双向（slower/faster）都报；probe
+        只把判据字段（kind/path/exists/min_bytes/hit/ok/cmd/uvx）算作漂移，size_bytes 属测量值不计。
+    - id: A3
+      status: implemented-with-evidence
+      evidence:
+        - logs/acceptance/c19_a3_imports.txt —— AST 判据原料：tools/*.py 的顶层导入只有
+          __future__/argparse/json/re/subprocess/sys/pathlib，BANNED 名单零命中
+        - logs/acceptance/c19_a3_offline_guard.txt —— ToolsOfflineGuardTest
+          通过（扫描 tools/*.py 的 AST 导入，命中 ee/requests/urllib/socket/http 等即失败）
+        - logs/acceptance/c19_a3_full_unit.txt —— python -m unittest discover -s
+          tests/unit：Ran 393 tests，OK (skipped=10)，EXIT=0；既有 352 例零回归
+        - logs/acceptance/c19_a3_ruff.txt —— uvx --offline ruff@0.17.0 check：All
+          checks passed!，EXIT=0
+      note: 两工具只用标准库、不发起任何网络请求；唯一的外部进程调用是 verify_facts_check.py 里一条只读 git
+        rev-parse（仅用于把 worktree 事实根解析到主工作区根，git 不可用时静默回落），已在 tools/README.md
+        显式说明。新用例 41 个全部离线，未破坏既有 tests/unit/test_offline_guard.py 与
+        test_fingerprint_literals.py（后者曾抓出本 change 初版硬编码指纹文件名，已改为中性名）。
+    - id: A4
+      status: implemented-with-evidence
+      evidence:
+        - logs/acceptance/c19_a4_e1_missing_file.txt / c19_a4_e2_not_json.txt /
+          c19_a4_e3_missing_summary.txt（diff 侧）—— 三种损坏输入均 EXIT=2，stderr
+          为可读中文原因（如「当前报告缺 summary
+          对象：logs\acceptance\c19_a4_missing_summary.json」）
+        - 'logs/acceptance/c19_a4_e4_facts_missing_checks.txt /
+          c19_a4_e5_facts_not_json.txt（facts 侧）—— 均 EXIT=2；--json 时同时在 stdout 给出
+          {"ok": false, "error": ...} 对象'
+        - c19_evidence.sh 的收尾扫描：grep -l Traceback logs/acceptance/c19_*.txt
+          零命中，即全部错误路径都不抛裸 traceback
+        - tests/unit/test_verify_report_tools.py 里 9 个退出码 2 的用例（缺文件/非
+          JSON/schema 不符/缺 summary/缺 checks/重名/facts-root 非目录/阈值非法）
+      note: 两个工具都以 main(argv) -> int 形式返回退出码，输入错误走 InputError 分支输出可读消息；另有兜底 except
+        把任何未预期异常也转成退出码 2，保证调用方脚本不被裸 traceback 打断。
+    - id: A5
+      status: implemented-with-evidence
+      evidence:
+        - git diff --stat -- gis/ tests/verify_all.py 'tests/smoke_*.py'
+          tests/unit/ README.md docs/comet/specs/ 全部为空（六个范围逐一核过）
+        - gis/spec.py:45 PROCESSING_VERSION = 3
+          保持原值；tests/unit/_helpers.py（GOLDEN_FINGERPRINTS 单一事实源）零 diff
+        - git status --porcelain 只有三行：?? docs/comet/changes/（工作流产物）、??
+          tests/unit/test_verify_report_tools.py、?? tools/ —— 无 logs/ 过程件、无
+          handoff JSON 落在仓库根
+        - logs/acceptance/c19_evidence.sh 收尾的 sha256 对照：主工作区
+          logs/verify_all_report.json 与 c14 基线在取证前后同值（本 change 全程未写主工作区任何文件）
+      note: 本 change
+        只新增四个文件（tools/verify_report_diff.py、tools/verify_facts_check.py、tools/README.md、tests/unit/test_verify_report_tools.py），无任何既有文件修改；发布面
+        spec 按 Q3=(a) 走不改变产品行为豁免，docs/comet/specs/ 零 diff。tools/
+        是新建顶层目录（仓库此前没有）。
+    - id: A6
+      status: implemented-with-evidence
+      evidence:
+        - tools/README.md（147 行）—— 含背景、环境、两个工具的典型调用与参数表、六类差异类别说明、G1-G4/P1-P7
+          断言清单表、事实根与主工作区根三级回落说明（含 worktree 无 data/ 的差异）、0/1/2 退出码表、与
+          tests/verify_all.py 的关系（旁路、不改入口、不改盘、不进 CI）、以及 subprocess 只用一条只读 git
+          的说明
+        - logs/acceptance/c19_a6_help.txt —— 两个工具的 --help 实际输出 + README 的章节目录（40
+          行非空）
+        - 两个工具的模块 docstring 各自带用法示例、差异类别/断言清单与退出码语义（tools/verify_report_diff.py
+          首部、tools/verify_facts_check.py 首部）
+      note: 用法文档落在 tools/README.md：因为 .gitignore 把 /docs/* 全忽略（只放行 docs/comet/ 与
+        docs/knowledge/），写在 docs/ 下的说明文件不会入库；tools/README.md 与工具同处且可入库。
+  checks:
+    - name:
+        text: tests/unit 全量（python -m unittest discover -s tests/unit）
+        truncated: false
+      result: passed
+      note:
+        text: Ran 393 tests，OK (skipped=10)；既有 352 例零回归，新增 41 例
+        truncated: false
+    - name:
+        text: uvx --offline ruff@0.17.0 check
+        truncated: false
+      result: passed
+      note:
+        text: All checks passed!（零告警）
+        truncated: false
+    - name:
+        text: tests/verify_all.py 在 worktree 内一条命令跑通
+        truncated: false
+      result: passed
+      note:
+        text: RUN 4 PASS / FAIL 0 / SKIP 9，含新 ruff-check 项；报告已带
+          probe；logs/acceptance/c19_entry_run.txt。全程未触碰主工作区产物，跑前确认 6531 空闲、未跑
+          arcpy
+        truncated: false
+    - name:
+        text: A1 破坏性自证（措辞与盘上事实相反）
+        truncated: false
+      result: passed
+      note:
+        text: 一致时 EXIT=0 零违规；人为反转一条 skip_reason 后 EXIT=1 且点名 P5/检查项/断言
+        truncated: false
+    - name:
+        text: A2 破坏性自证（构造漂移）
+        truncated: false
+      result: passed
+      note:
+        text: 相同报告 EXIT=0 无漂移；构造 run->skip + 耗时翻倍 + probe.hit 翻转后 EXIT=1，--json 逐类别列出
+        truncated: false
+    - name:
+        text: A4 损坏输入
+        truncated: false
+      result: passed
+      note:
+        text: 5 例（缺文件/非 JSON/缺 summary/缺 checks/阈值非法）全部 EXIT=2，可读错误、无 Traceback
+        truncated: false
+    - name:
+        text: A5 零 diff 核对
+        truncated: false
+      result: passed
+      note:
+        text: gis/、tests/verify_all.py、tests/smoke_*.py、tests/unit/
+          既有用例、README.md、docs/comet/specs/ 的 git diff 全为空
+        truncated: false
+  checks_truncated: false
+  known_limits:
+    - text: 'P1 把「缺 probe 键」判为违规：c17 之前的旧报告（如主工作区 logs/ 下那份 2026-10-14 的
+        verify_all_report.json）会因此红 12 条 P1。这是有意的旧 schema 检出，但使用者需知道「红」不等于本
+        change 出错；显式写 "probe": null 是合法的。'
+      truncated: false
+    - text: P7（cache_probe.hit 与层位自洽）、P1 的缺键判定、G3/G4（passed/failed
+        计数）超出用户提示词逐条列举的断言清单，属同一主题（措辞/计数/层位/probe 与事实一致）下的补充断言；已在 tools/README.md
+        与本次交接显式披露，用户可否决。
+      truncated: false
+    - text: verify_facts_check.py 会调用一条只读 git 命令（git rev-parse
+        --git-common-dir，subprocess，超时 20s）用于解析主工作区根；不引入任何网络导入。git 不可用或事实根不在 git
+        仓库内时静默回落到「主工作区根 = 事实根」，此时 P6 退化为同根核对。
+      truncated: false
+    - text: 跨根语义：事实根默认从报告 checks[].log_path 反推；显式传一个与报告生成根不同的根（例如 worktree 报告 +
+        --facts-root 指向主工作区）会让 P5 按该根判定并转红 —— 这是「跨根核对」的设计用途，不是缺陷，但使用者需理解其含义。
+      truncated: false
+    - text: 耗时漂移双向都算漂移（direction=slower/faster）：机器变快同样会转红，可用 --duration-ratio 放宽。
+      truncated: false
+    - text: 差异类别只覆盖 brief 列出的六类（检查项集合/层位/状态/summary
+        计数/耗时/probe）；coverage_matrix、uncovered_modules、overall 的变化不在对比范围内。
+      truncated: false
+    - text: 两工具未接入 tests/verify_all.py 的 RUN 层、也不进 CI（按范围硬约束），需人工或后续 change 调用。
+      truncated: false
+    - text: 本 change 未驱动任何 arcpy 项（worktree 无 data/，渲染两项自然 SKIP），故未受 arcpy
+        耗时抖动影响，也未验证「缓存命中态下渲染两项自动入 RUN」的新旧对比 —— 该场景需在主工作区（有 data/derived）生成报告，属本
+        change 范围之外。
+      truncated: false
+    - text: P6 只识别 skip_reason 里 data/ 开头的产物路径；若断言以其它形态提及产物（例如只写文件名或换用 logs/
+        路径），不会被机械抓到。
+      truncated: false
+  known_limits_truncated: false
+  review: null
+  submitted_at: 2026-10-18T07:28:37.914Z
+blockers: []
+verification:
+  candidate_id: ae0c4407-6fba-4473-80f5-ff2510e967ef
+  identity_provider: skill-coordinated
+  verifier_execution_ref: skill-coordinated:verifier:4ca28a8d-250e-4303-bf51-83ee235b36be
+  iteration: 1
+  attempt: 1
+  assurance: skill-coordinated
+  verdict: pass
+  checks:
+    - id: unit-tests
+      name:
+        text: tests/unit 全量离线单测（unittest discover）
+        truncated: false
+      argv_display:
+        - text: -m
+          truncated: false
+        - text: unittest
+          truncated: false
+        - text: discover
+          truncated: false
+        - text: -s
+          truncated: false
+        - text: tests/unit
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 20297
+    - id: ruff-check
+      name:
+        text: ruff 门禁（离线，零下载）
+        truncated: false
+      argv_display:
+        - text: --offline
+          truncated: false
+        - text: ruff@0.17.0
+          truncated: false
+        - text: check
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 182
+  summary:
+    text: 六项验收 A1-A6 全部通过，全部结论由我自己跑命令、读文件、构造对立样本独立得出，未采信 Builder 的结论（其
+      logs/acceptance/* 仅当线索，且抽样复跑结果与我自建样本一致）。实测要点：facts_check 一致→0／措辞反向→1
+      且点名检查项与断言（P5 + check 名 + 盘上证据）／还原→0；diff 相同→0／构造 run↔skip + 耗时翻倍 +
+      probe.hit 翻转→1 且 --json 逐类别逐项列出；两工具 AST 级零网络导入，唯一子进程是只读 git rev-parse；393
+      例全绿（352 存量 def test_ + 41 新增，10 skip 全部来自存量 skipUnless）；ruff 零告警；损坏输入统一退出码
+      2、可读错误、无裸
+      traceback、调用方继续执行；禁改面（gis/、tests/verify_all.py、tests/smoke_*.py、tests/unit
+      既有用例、根 README.md、docs/comet/specs/**）零 diff，PROCESSING_VERSION=3 与金指纹
+      b91c09c9c6451c16 未动；A6 的 --help、docstring 用法与 README 四项覆盖（含 worktree 无
+      data/ 的事实根差异）齐备。残留风险为文档粒度、启发式覆盖面与证据自持性一类，均不构成验收项缺口。全程只读：所有构造件与输出写在
+      C:/Users/Administrator/AppData/Local/Temp/ 下，工作区真件 mtime 与 sha256 未被本会话触碰。
+    truncated: false
+  risks:
+    - text: tools/README.md 的 --json 说明以「类别/键名 + 断言 ID」为主，未逐一枚举顶层键
+        schema/ok/counts/current/baseline/duration_thresholds；满足「至少覆盖」，但字段清单不完整。
+      truncated: false
+    - text: 两工具都以 except Exception 兜底，把任何未预期异常折叠成退出码
+        2（前缀「未预期的内部错误」）；对调用方友好，但实现缺陷会被表述成「输入错误」且不再暴露 traceback。本次未触发该分支。
+      truncated: false
+    - text: brief/README 称「worktree 完全没有 data/」措辞不精确：实测存在空目录
+        data/{deliver,derived,raw}（0 个文件）；操作性结论（该根下 cache_probe 必然
+        miss）成立，已被独立核对（a1_real 报 exists=False 与盘上一致，跨根核对在主工作区确见 4633924 B 产物）。
+      truncated: false
+    - text: P5 是关键词 +
+        负向后顾的启发式，只覆盖「不存在/未命中/未在盘/缺失/不在主工作区」与「命中/在盘」两组词形，同义改写（如「尚未生成」「无缓存」）不会被抓；tool_probe
+        的措辞不在断言面内。
+      truncated: false
+    - text: A1 的「一致」输入是 worktree 内 gitignore 的 logs/verify_all_report.json（Builder 在
+        worktree 跑入口生成）；我用盘上
+        logs/verify_all/*.log、started_at/finished_at、入口输出与磁盘事实交叉印证其真实性，但该报告不入库，复现需重跑入口（写
+        logs/，超出只读 Verifier 权限）。
+      truncated: false
+    - text: 我未重跑 tests/verify_all.py 入口（会写 logs/ 并启动 arcpy/daemon），A1 复用 Builder
+        生成的报告；六项验收判据均不依赖该重跑，Runtime 的 unit-tests / ruff-check 两项执行记录与我的独立复跑一致。
+      truncated: false
+  risks_truncated: false
+  completed_at: 2026-10-18T07:35:56.601Z
+history:
+  - goal_cycle: 1
+    iteration: 1
+    attempt: 1
+    outcome: pass
+    unresolved_ids: []
+    summary:
+      text: 六项验收 A1-A6 全部通过，全部结论由我自己跑命令、读文件、构造对立样本独立得出，未采信 Builder 的结论（其
+        logs/acceptance/* 仅当线索，且抽样复跑结果与我自建样本一致）。实测要点：facts_check 一致→0／措辞反向→1
+        且点名检查项与断言（P5 + check 名 + 盘上证据）／还原→0；diff 相同→0／构造 run↔skip + 耗时翻倍 +
+        probe.hit 翻转→1 且 --json 逐类别逐项列出；两工具 AST 级零网络导入，唯一子进程是只读 git
+        rev-parse；393 例全绿（352 存量 def test_ + 41 新增，10 skip 全部来自存量
+        skipUnless）；ruff 零告警；损坏输入统一退出码 2、可读错误、无裸
+        traceback、调用方继续执行；禁改面（gis/、tests/verify_all.py、tests/smoke_*.py、tests/unit
+        既有用例、根 README.md、docs/comet/specs/**）零 diff，PROCESSING_VERSION=3 与金指纹
+        b91c09c9c6451c16 未动；A6 的 --help、docstring 用法与 README 四项覆盖（含 worktree 无
+        data/ 的事实根差异）齐备。残留风险为文档粒度、启发式覆盖面与证据自持性一类，均不构成验收项缺口。全程只读：所有构造件与输出写在
+        C:/Users/Administrator/AppData/Local/Temp/ 下，工作区真件 mtime 与 sha256
+        未被本会话触碰。
+      truncated: false
+    completed_at: 2026-10-18T07:35:56.601Z
+history_overflow:
+  dropped_entries: 0
+  first_dropped_at: null
+  last_dropped_at: null
+  outcome_counts:
+    pass: 0
+    fail: 0
+    blocked: 0
+    execution-error: 0
+    recovery: 0
+verification_result: pass
+verification_report: verification.md
+archived: true
+created_at: 2026-10-18T07:00:13.287Z
