@@ -19,6 +19,8 @@ capability 的行为，必须在此**追加一行**并给对方 spec 加注记�
 | `dockpane`（C11）：「`gis/preflight.py` **零改动**（`check_pro_addin` 的 installed/deployed/listening 三探测语义不变）」 | 同上 | 2026-10-08 | 该句仅约束 C11 范围；三探测语义已被 C12 修订（`ok` 改以端点为准） |
 | `core-contract-unit-tests`（C1）：「`tests/smoke_*.py` **保持原样**；`gis/` **无行为性修改**」 | `c10-review-patches`（C10，`d091bff`）＋ `c12-preflight-endpoint-probe`（C12） | 2026-10-08 | C10 更新了 `smoke_array_chunking.py` / `smoke_map_renderers.py` / `smoke_timeseries.py`；C12 更新了 `gis/preflight.py` 的探测行为 |
 | `p1a-arcpy-bridge`（C2）：「优先复用 P0 缓存产物，**指纹 `c9243efd`**」 | `p2-presets`（C4，`ce40e45`，`PROCESSING_VERSION` 2→3）＋ `c10-review-patches`（C10，指纹须随时代取值） | 2026-10-08 | 缓存文件名含指纹（`gis/emit.py::_output_path` → `{slug}.{指纹8位}.tif`），`c9243efd` 是 PV=2 历史值；当代金指纹为 `b91c09c9c6451c16`。**按指纹指名缓存/写期望值必须随时代取值** |
+| `verify-all`（C14）：RUN 层「固定 4 项（tests-unit / tui-timeseries-probe / daemon-endpoint-probe / ＋前置产物存在时的 rescan-big）」与 SKIP 层「恰好 9 项、其中含 `smoke_map_renderers` qgis/arcpy」 | `c17-verify-all-evidence-aware`（c17，2026-10-18） | 2026-10-18 | 条件项的层位改由**盘上/环境事实**决定：①`smoke-map-renderers-qgis`/`-arcpy` 在当代指纹缓存 `data/derived/s2_beijing_test.<指纹8位>.tif`（>4096 B）存在时**自动入 RUN 层**（与 rescan-big 同款语义），缺失时 SKIP 且文案写实；②新增 `ruff-check` 可选 RUN 项（`uvx --offline ruff@0.17.0 check`，缺失时 SKIP + 安装提示，不 FAIL）。SKIP 集合因此不再是固定 9 项。**另有措辞订正**：rescan-big 的「不在主工作区」断言与事实相悖（产物确在主工作区盘上），改为「本次执行根下无」 |
+| `p1a-arcpy-bridge`（C2）：`emit_map` 产物面与 renderer 纪律条款 — **未删除、未改写**；其失败判定行为（局部失败容忍 / layout_error 被丢弃 / arcpy 导出缺失不报错）已被收紧 | `c17-verify-all-evidence-aware`（c17，2026-10-18） | 2026-10-18 | `emit_map` 失败判定改为「**预期产物缺一即失败**」，且「预期」按 spec 真实配置推导：qgis 需 `.qgz`+`.png`；arcpy 需 `.aprx` + `layout.formats` 所列导出（`formats=("pdf",)` 这类单格式合法配置必须 PASS）；`layout=None`（nolayout，无导出）必须 PASS；`layout_error` 非空即失败。原条款与 Scenario/编号/验收全部保留，仅在文件末尾追加 `> ⚠️` 注记（双副本逐字节一致）；验收落在 `verify-all` 的 A20–A22 |
 
 **就地订正（非跨 change 取代，仅格式/措辞对齐实现）**：
 
@@ -30,6 +32,9 @@ capability 的行为，必须在此**追加一行**并给对方 spec 加注记�
 | `c13-spec-consistency`（C13，自身） | 本 change 自己的 spec 也曾用「引用写在标题外独立行」形态（与 C12 同类）——**由本 change 新增的结构守卫抓出**（全量测试转红）；已把 12 个 Scenario 的 `（验收：Ax）` 移入标题并改用 Runtime 编号 **A13–A24**、删除 12 行标题外引用，双副本同步 | 2026-10-08（C13 归档后自纠） |
 | `p3-skill-knowledge`(C7) / `p3-osm-overpass`(C8) / `p1b-arcgis-addin`(C9) / `c10-review-patches`(C10) / `dockpane`(C11) | 各 Scenario 标题补 `（验收：Ax）`（共 40 条：5+8+8+9+10），映射见 `spec-revision-list.md` §F6 | 2026-10-08（C13） |
 | `verify-all`（C14，自身） | 本 change 自己的 spec 偏离两条发布面规范：①H1 为裸标题 `# verify-all — …`（补齐 `Capability：` 前缀与 ` —— ` 分隔）；②Scenarios 写成 `## Scenario:`（与章节同级）且引用写在标题外独立行——已改为 `### Scenario: …（验收：Ax）`（A1–A7，与 brief 验收集同号）并删除 7 行独立引用。**由 C13 结构守卫在 C14 归档后抓出**（全量单测转红：H1 前缀 / Scenario 存在性共 3 条断言）；发布面与归档面双副本同步 | 2026-10-11（C14 归档后自纠） |
+| `verify-all`（C14 → c17） | C14 原文的 7 个 Scenario 引用为 A1–A7；c17 的 brief 验收示例也占用 A1–A5（语义不同：条件项升级 / 措辞一致 / 发布面一致 / ruff 接入 / 回归）。若沿用原编号会造成**同名不同义的假映射**，故按规范 2「编号用该 change 的验收集编号」把这 7 个 Scenario 整体后移为 **A6–A12**，c17 新增的 3 个场景为 **A13–A15**。**场景正文逐字未改**，仅标题内引用编号后移；spec 内已加「c17 编号说明」注明对应关系（A6←A1 … A12←A7）。（与 C13 自身 spec 的 A13–A24 自纠同类） | 2026-10-18（c17） |
+| `verify-all`（C14 → c17） | 原文「入口按静态的『网络依赖分类表』把检查项分为 RUN 与 SKIP 两层」在条件项引入后不再字面成立（层位由盘上/环境事实决定），已就地加 `⚠️ c17 修订` 注记说明；SKIP 层 `smoke_map_renderers` 一条加注记收窄为「仅缓存缺失时 SKIP」；退出码段补注 `ruff-check` 参与同一退出码语义。**原文全部保留未删** | 2026-10-18（c17） |
+| `verify-all`（C14 → c17，第二批） | 第二批范围（渲染失败语义收紧）新增 4 项验收，原编号方案出现空档（brief A1–A5 + A16–A19，spec 占 A6–A15），违反「编号连续且 brief/spec 互不重叠」；已重排为 **brief A1–A9 / spec A10–A23**（共 23 项，连续无空档）。spec 内「c17 编号说明」已同步给出 C14 旧号映射（A10←A1 … A16←A7）。场景正文逐字未改 | 2026-10-18（c17） |
 
 ## 二、发布面四条规范
 

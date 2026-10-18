@@ -1428,6 +1428,30 @@ def _array_sample(arr, rows: int = 3, cols: int = 3) -> dict:
 # 出口 A：地图 / 工程
 # ---------------------------------------------------------------------------
 
+def _expected_map_artifacts(spec: ArtifactSpec, renderer: str) -> tuple[list[str], list[str]]:
+    """按 spec 的真实配置推出「预期产物」键名，返回 (预期键列表, 问题列表)。
+
+    c17：渲染失败判定不能再写死「某几个产物」——LayoutSpec.formats 允许只要求单一格式
+    （如 ("pdf",)），layout 缺席（nolayout）时 arcpy 本就不导出 PDF/PNG。判据必须从 spec 推导，
+    否则会把合法配置误判为失败。
+
+    键名与 emit_map 写进 results 的键一一对应：qgis → qgz/png；arcpy → aprx + formats 里的导出。
+    """
+    problems: list[str] = []
+    if renderer == "arcpy":
+        expected = ["aprx"]
+        layout = spec.layout
+        if layout is not None:
+            # formats=() 是合法构造（校验只查非法值、不查空）。bridge 侧口径是
+            # `lay.get("formats") or ["pdf","png"]`（arcpy_bridge.py），即空值回落成 pdf+png
+            # 并真的导出 —— 判据必须跟着回落，否则会把一次成功的渲染判成失败。
+            formats = tuple(layout.formats or ()) or ("pdf", "png")
+            expected.extend(f for f in formats if f in ("pdf", "png", "jpg"))
+        return expected, problems
+    # qgis：现状产物面就是 .qgz 工程 + .png 预览图，与 LayoutSpec 无关
+    return ["qgz", "png"], problems
+
+
 def emit_map(job: Job) -> dict:
     """
     两条 renderer 路径，都产出"人能直接看"的东西：
@@ -1494,11 +1518,19 @@ def emit_map(job: Job) -> dict:
             # overlays：同一 OverlaySpec 分发两个 bridge —— 样式参数同源（C8 W3）
             res = _ab.write_aprx(spec, visual, grid, layout=spec.layout,
                                  overlays=spec.overlays)
-            for key in ("aprx", "pdf", "png"):
-                if res.get(key):
-                    results[key] = res[key]
-                    results["artifacts"].append(res[key])
-                    job.artifacts.append(res[key])
+            # c17：登记面必须与「预期产物」同源 —— 旧代码写死 ("aprx","pdf","png")，
+            # 而 layout.formats 合法值含 jpg（spec.py:LAYOUT_FORMATS，arcpy_bridge 有
+            # exportToJPEG 分支），于是 formats 里只要出现 jpg 就必然被判「缺失」。
+            expected_arcpy, _ = _expected_map_artifacts(spec, "arcpy")
+            for key in ["aprx"] + [k for k in ("pdf", "png", "jpg") if k in expected_arcpy]:
+                val = res.get(key)
+                # c17：键存在还不够，路径必须真实落盘 —— 否则「bridge 声称产出了、
+                # 实际什么都没写」会被判成功（qgis 分支因 Path()/_render_png 会碰真实文件，
+                # 天然安全；arcpy 分支全靠这里兜住）。
+                if val and Path(val).is_file():
+                    results[key] = val
+                    results["artifacts"].append(val)
+                    job.artifacts.append(val)
             if res.get("elements"):
                 results["layout_elements"] = res["elements"]
             # bridge 侧矢量叠加明细（C8 W3：诊断与验收证据）
@@ -1522,6 +1554,9 @@ def emit_map(job: Job) -> dict:
             results["qgz"] = str(qgz)
             if qgz_detail.get("layout"):
                 results["qgis_layout"] = qgz_detail["layout"]
+            # c17：布局失败必须留痕（旧代码只读 layout 键，layout_error 被静默丢弃）
+            if qgz_detail.get("layout_error"):
+                results["layout_error"] = qgz_detail["layout_error"]
             # bridge 侧矢量叠加明细（C8 W3：诊断与验收证据）
             if spec.overlays:
                 results["qgis_overlays"] = qgz_detail.get("overlays") or 0
@@ -1544,14 +1579,23 @@ def emit_map(job: Job) -> dict:
         except Exception as e:
             results["png_error"] = f"{type(e).__name__}: {e}"
 
-    branch_failed = (
-        "arcpy_error" in results if renderer == "arcpy"
-        else ("qgz_error" in results and "png_error" in results)
-    )
-    if branch_failed:
+    # --- 失败判定（c17 收紧）：预期产物缺一即失败 ---
+    # 旧口径是「两者都失败才算失败」（qgis: qgz_error AND png_error），于是「.qgz 崩了但 .png
+    # 成了」会被判成功，verify_all 的渲染项 PASS 因此不可信。现改为按**预期产物**逐项核验，
+    # 且「预期」从 spec 的真实配置推导，不写死 —— layout.formats 允许只要单一格式
+    # （如 ("pdf",)），layout 缺席（nolayout）则本就不导出 PDF/PNG。
+    expected, problems = _expected_map_artifacts(spec, renderer)
+    missing = [k for k in expected if not results.get(k)]
+    if missing:
+        problems.append(f"预期产物缺失：{missing}（已产出：{sorted(k for k in expected if results.get(k))}）")
+    # 布局失败必须显式化：qgis_bridge 一直产出 layout_error，旧代码只读 layout 键，把错误丢了
+    if results.get("layout_error"):
+        problems.append(f"布局生成失败：{results['layout_error']}")
+    if problems:
         raise RuntimeError(
-            f"renderer={renderer!r} 的产物分支全部失败。\n"
-            f"  错误记录：{ {k: v for k, v in results.items() if k.endswith('_error')} }"
+            f"renderer={renderer!r} 出图失败（预期产物 {expected}）：\n  - "
+            + "\n  - ".join(problems)
+            + f"\n  错误记录：{ {k: v for k, v in results.items() if k.endswith('_error')} }"
         )
 
     job.progress("完成", 100, f"{len(results['artifacts'])} 个产物")
