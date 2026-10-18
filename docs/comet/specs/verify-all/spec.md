@@ -74,6 +74,11 @@ TUI 与 daemon 的功能覆盖映射：TUI 渲染面由 tui-timeseries-probe 承
 - 覆盖矩阵：README 功能面模块（契约、三出口、presets、batch、chunking、timeseries、OSM、daemon/MCP/RPC/events、TUI、arcpy bridge、add-in 探测、preflight、client）逐模块列出映射的检查项及状态；无任何检查项映射的模块显式标 `uncovered`。
 - （c17）条件项与可选项的状态同样进入 JSON 报告与覆盖矩阵；条件成立的真实耗时要落 `duration_s`，SKIP 项耗时保持 0。
 - （c17）每条检查项新增 `probe` 字段，记录层位判据：条件项为 `{"kind": "cache_probe", "path", "exists", "size_bytes", "min_bytes", "hit"}`，ruff 项为 `{"kind": "tool_probe", "cmd", "uvx", "ok"}`；固定 RUN/SKIP 项为 `null`。报告读者可据此直接核对「为什么这一项是 RUN 还是 SKIP」。
+- （c21）`probe` 形态补充：`report-selfcheck`（c21 新增的条件项）为
+  `{"kind": "tool_probe", "cmd", "path", "ok"}`（`ok` = 自查工具文件是否存在，对应其 RUN/SKIP 层位）；
+  `smoke-array-chunking-rescan-big`（c17 时漏了判据的条件项）同渲染两项改用 `cache_probe`，但其产品
+  没有额外体积门槛（`min_bytes` 记 0）；该两项的层位判据与 `probe.hit` 同源 —— 均为「产物存在且非空」
+  （0 字节视为不可用，SKIP 文案如实写「存在但为空」）。
 
 ## 退出码
 

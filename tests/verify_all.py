@@ -500,21 +500,24 @@ def build_checks() -> list[Check]:
     big_size = big_artifact.stat().st_size if big_artifact.exists() else 0
     # c21：条件项必须带层位判据（verify-all spec 报告节：条件项为 cache_probe）。此前本项 probe 为
     # null，使 tools/verify_facts_check.py 的 P5/P7 无法覆盖它的措辞（实测把 skip_reason 改写成
-    # 「已命中」工具仍判绿）。判定语义不变 —— 产物存在即 RUN；min_bytes=0 表示本项无额外体积门槛，
-    # 故 hit 与层位始终自洽（P7），size_bytes 仍如实记录以便读者判断产物是否被截断。
+    # 「已命中」工具仍判绿）。层位门槛与 probe.hit 同源（「存在且非空」，见下方 if）—— 0 字节产物
+    # 视为不可用；min_bytes=0 表示本项无额外体积门槛；size_bytes 仍如实记录以便判断是否被截断。
     probe_big = {"kind": "cache_probe", "path": f"data/derived/{big_name}",
                  "exists": big_artifact.exists(), "size_bytes": big_size,
                  "min_bytes": 0, "hit": big_size > 0}
-    if big_artifact.exists():
+    if big_size > 0:
+        # c21（#1 修复）：层位门槛与 probe.hit 同源（「存在且非空」），使层位、probe.hit、
+        # 工具侧独立重算的 hit_now 三处一致 —— 否则「0 字节产物存在」时 P7 会多报一条噪声。
         big_check = C("smoke-array-chunking-rescan-big", "array chunking")
         big_check.probe = probe_big
         checks.append(big_check)
     else:
         # 措辞纪律（c17 / A2）：只陈述「本次执行根下缺失」，不断言别处有无 ——
         # 该产物曾确实存在于主工作区盘上，旧文案「不在主工作区」与事实相悖。
+        big_state = "存在但为空（0 B）" if big_artifact.exists() else "不存在"
         big_check = skip_check(
             Check("smoke-array-chunking-rescan-big", "array chunking", "skip"),
-            f"前置产物缺失：本次执行根下无 data/derived/{big_name}"
+            f"前置产物不可用：本次执行根下 data/derived/{big_name} {big_state}"
             f"（查找路径 {big_artifact}）；产物未入库、按需生成，"
             "chunking 单元面已由 tests-unit 的 test_array_chunking 离线覆盖；"
             "单独复跑：联网环境先 PYTHONPATH=. python tests/smoke_array_chunking.py --stage big "
