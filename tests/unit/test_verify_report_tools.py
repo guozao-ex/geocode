@@ -27,7 +27,18 @@ TOOLS_DIR = ROOT / "tools"
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tools import verify_facts_check, verify_report_diff  # noqa: E402  (需先落 sys.path)
+# c22 #2：工具文件缺失时不要让整个 tests/unit 因 import 失败而整片红 ——
+# 只有两个工具都在盘上时才 import，并在功能用例上加 skipIf；工具齐全时行为与原来完全一致。
+TOOL_FILES = {
+    "verify_facts_check": TOOLS_DIR / "verify_facts_check.py",
+    "verify_report_diff": TOOLS_DIR / "verify_report_diff.py",
+}
+MISSING_TOOLS = sorted(name for name, path in TOOL_FILES.items() if not path.is_file())
+
+if not MISSING_TOOLS:
+    from tools import verify_facts_check, verify_report_diff  # noqa: E402  (需先落 sys.path)
+
+_TOOLS_SKIP_REASON = f"tools/ 缺 {MISSING_TOOLS}：相关用例归 SKIP（c22）"
 
 REPORT_SCHEMA = "geocode.verify-all.report.v1"
 
@@ -102,6 +113,7 @@ def _invoke(module, argv):
     return code, out.getvalue(), err.getvalue()
 
 
+@unittest.skipIf(MISSING_TOOLS, _TOOLS_SKIP_REASON)
 class ReportDiffToolTest(unittest.TestCase):
     """verify_report_diff.py：漂移检测与退出码语义。"""
 
@@ -251,6 +263,7 @@ class ReportDiffToolTest(unittest.TestCase):
         self.assertIn("error", payload)
 
 
+@unittest.skipIf(MISSING_TOOLS, _TOOLS_SKIP_REASON)
 class FactsCheckAssertionTest(unittest.TestCase):
     """verify_facts_check.py 的断言层（直接调 check_report，事实根可控）。"""
 
@@ -378,6 +391,7 @@ class FactsCheckAssertionTest(unittest.TestCase):
         self.assertIn(("P7", "render"), self._assertions(report))
 
 
+@unittest.skipIf(MISSING_TOOLS, _TOOLS_SKIP_REASON)
 class FactsCheckCliTest(unittest.TestCase):
     """verify_facts_check.py 的入口层：退出码、事实根回落与 --json 结构。"""
 
@@ -483,6 +497,7 @@ class FactsCheckCliTest(unittest.TestCase):
         self.assertIn("error", payload)
 
 
+@unittest.skipIf(not sorted(TOOLS_DIR.glob("*.py")), "tools/ 下没有 .py —— 无从扫描")
 class ToolsOfflineGuardTest(unittest.TestCase):
     """tools/*.py 不得导入网络/GEE 库（AST 扫描，与 test_offline_guard.py 同口径）。"""
 
