@@ -2,8 +2,8 @@ schema: comet.native.v4
 name: c17-verify-all-evidence-aware
 language: zh-CN
 phase: archive
-status: active
-state_version: 34
+status: done
+state_version: 35
 brief: brief.md
 document_constraints_version: 3
 shape_confirmation_hash: 561a76ba6777f517bd6a5b6fc53db2ee820e22f4b34d79ee2d4356e4be74cb8c
@@ -17,7 +17,7 @@ workspace:
   target_branch: main
   finish: merge
 loop:
-  stage: archive-ready
+  stage: done
   goal_cycle: 5
   iteration: 1
   attempt: 1
@@ -26,7 +26,7 @@ loop:
   no_progress_count: 0
   execution_failure_count: 0
   previous_unresolved_ids: []
-  next_action: archive
+  next_action: null
 acceptance:
   - id: A1
     source: brief.md
@@ -945,5 +945,5 @@ history_overflow:
     recovery: 0
 verification_result: pass
 verification_report: verification.md
-archived: false
+archived: true
 created_at: 2026-10-11T13:02:52.159Z
