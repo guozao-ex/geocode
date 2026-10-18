@@ -1,0 +1,664 @@
+schema: comet.native.v4
+name: c20-spec-guard-exemption
+language: zh-CN
+phase: archive
+status: done
+state_version: 11
+brief: brief.md
+document_constraints_version: 3
+shape_confirmation_hash: 9c25418f944886167610c4808d30e9b638eaaf56d42a864e53284aa5491ff8a9
+spec_changes:
+  - capability: c13-spec-consistency
+    operation: modify
+    source: specs/c13-spec-consistency/spec.md
+workspace:
+  isolation: worktree
+  change_branch: comet/c20-spec-guard-exemption
+  target_branch: main
+  finish: merge
+loop:
+  stage: done
+  goal_cycle: 2
+  iteration: 1
+  attempt: 1
+  retry_epoch: 0
+  failed_iteration_count: 0
+  no_progress_count: 0
+  execution_failure_count: 0
+  previous_unresolved_ids: []
+  next_action: null
+acceptance:
+  - id: A1
+    source: brief.md
+    text: "A1: 守卫对「无 `specs/` 且 `brief.md` 含合规豁免声明」的归档目录放行：构造一个最小归档目录（`brief.md`
+      带一行「不改变产品行为：<具体理由>」+ `comet-state.yaml` + `verification.md`，**无**
+      `specs/`）后，该目录不再出现在违规列表里。"
+    result: passed
+    reason:
+      text: 自建最小归档目录（brief.md 一行「- 不改变产品行为：仅新增两个只读开发者工具与离线用例，不接入任何产品路径。」+
+        comet-state.yaml + verification.md，无 specs/）→
+        archive_completeness_problems 返回 []；真实 c19 归档目录（无 specs/、三件必备件齐全、brief
+        L110 有合规豁免）同样返回 []。放行确由豁免触发：把 c19 brief
+        的「不改变产品行为：」改成「行为说明：」后同一守卫立刻点名该目录。
+      truncated: false
+  - id: A2
+    source: brief.md
+    text: "A2: 守卫对「无 `specs/` 且 `brief.md` 未声明豁免」的归档目录**仍然报错**并点名该目录（证明放行不是无条件放宽）。"
+    result: passed
+    reason:
+      text: "同构目录但 brief 无豁免声明 → 报 1 条问题并点名目录（`<dir>: 缺  无 specs/*.spec.md 且 brief.md
+        未声明合规的「不改变产品行为」豁免`）。26 个目录混合根同测：如实只报 17 个该红的目录，无一漏报、无误伤。"
+      truncated: false
+  - id: A3
+    source: brief.md
+    text: "A3: 破坏性自证：把豁免理由改成占位形态（空理由、`<TODO>`、`{{reason}}`）后必须重新转红；且把 `missings`
+      的其它必备件（`brief.md` / `comet-state.yaml` / `verification.md` 之一）去掉时也必须转红。"
+    result: passed
+    reason:
+      text: 破坏性自证全部转红并点名：空理由、纯空白、<TODO>、{{reason}}、TODO、待填写、<具体理由>；豁免写在 H1/围栏内/HTML
+        注释里也转红；有合规豁免但分别去掉 verification.md / comet-state.yaml / brief.md
+        三个变体各自转红并点名缺失件。
+      truncated: false
+  - id: A4
+    source: brief.md
+    text: "A4: 回归：main 当前那 1 例红（c19 归档目录）转绿，`python -m unittest discover -s
+      tests/unit` 全量 393 例 OK（skipped=10）；`uvx --offline ruff@0.17.0 check`
+      零告警。"
+    result: passed
+    reason:
+      text: "用 9b72b8a 的旧守卫源码临时副本对当前归档面实跑 = 1 例失败，正是
+        `2026-10-18-c19-verify-report-drift: 缺  无 specs/*.spec.md`（复现 main
+        唯一红）；新守卫实跑 `-m unittest discover -s tests/unit` = Ran 399 tests, OK
+        (skipped=10)；旧文件 8 个 def test_ → 新 14 个（+6），故 399-6=393 与验收文字「393
+        例」的基数一致；`uvx --offline ruff@0.17.0 check` = All checks passed。"
+      truncated: false
+  - id: A5
+    source: brief.md
+    text: "A5: 零
+      diff：`gis/**`、`Pro/**`、`scripts/**`、`geocode.json`、`tests/verify_all.py`、\
+      `tests/smoke_*.py`、`PROCESSING_VERSION` 与金指纹 `b91c09c9c6451c16` 均零
+      diff；`docs/comet/specs/` 下**只有** `c13-spec-consistency/spec.md` 与
+      `README.md` 有改动。"
+    result: passed
+    reason:
+      text: 'git diff 9b72b8a..448fbe2 对
+        gis/、Pro/、scripts/、geocode.json、tests/verify_all.py、tests/unit/_helpers.py
+        的 name-only 为空；10 个 tests/smoke_*.py 逐文件 numstat 为空；gis/spec.py L45
+        PROCESSING_VERSION = 3；_helpers.py 金指纹 3:
+        "b91c09c9c6451c16"；docs/comet/specs/ 下仅 README.md 与
+        c13-spec-consistency/spec.md 有改动。'
+      truncated: false
+  - id: A6
+    source: brief.md
+    text: "A6: 发布面/归档面双副本逐字节一致：`docs/comet/specs/c13-spec-consistency/spec.md`
+      与其**全部**归档副本哈希相同；台账 `docs/comet/specs/README.md` 确有登记本次修订的新行；修订后的 spec 里
+      Scenario 标题全部仍带 `（验收：A…）`。"
+    result: passed
+    reason:
+      text: 发布面 c13 spec 与唯一归档副本 sha256 同为 ca500e74db690c93…（逐字节相同）；448fbe2 对
+        docs/comet/specs/README.md = +1 行，即台账末行「2026-10-18（c20）」；修订后 spec 的 12 个
+        `### Scenario:` 标题 12/12 带（验收：A…）。
+      truncated: false
+  - id: A7
+    source: specs/c13-spec-consistency/spec.md
+    text: 声明取代关系（F1：`check_pro_addin` 三份互斥陈述）（验收：A13） 在 C12
+      spec（`c12-preflight-endpoint-probe`）的「定位」段追加 `Supersedes` 行，声明其取代
+      `p1b-arcgis-addin`（C9）的 6530 探测判据条款与 `dockpane`（C11）的「`check_pro_addin`
+      三探测语义不变」条款；并在 C9/C11 两处被取代条款之后各追加一行 `> ⚠️ 已被 c12-preflight-endpoint-probe
+      修订（2026-10-08）…` 注记。三份 spec 均**双副本同步**，被取代条款原文逐字未变。
+    result: passed
+    reason:
+      text: c12 spec L8 `> **Supersedes**：…` 落在 `## 定位`（L3–L15）段内；C9 spec 被取代条款 L57 之后
+        L58 有 `> ⚠️ 本条判据已被 `c12-preflight-endpoint-probe` 修订（2026-10-08）…`，C11
+        spec L88-89 条款后 L90 同款项；三份 spec 发布面/归档面哈希两两相同；9db9849 逐行配对：C9 +9/-8、C11
+        +12/-11 的删除行全为 Scenario 标题行与 C11 的 H1（F5），被取代条款原文无任何删除或改写。
+      truncated: false
+  - id: A8
+    source: specs/c13-spec-consistency/spec.md
+    text: 标注 C1 的范围声明已被后续 change 修订（F2）（验收：A14） 在
+      `core-contract-unit-tests`（C1）的「`tests/smoke_*.py` 保持原样；`gis/`
+      无行为性修改」条款后追加 `⚠️` 注记，点名 C10 修改的三个 smoke 文件与 C12 修改的 `gis/preflight.py`
+      行为，并指向 `docs/comet/specs/README.md`。原文不改。
+    result: passed
+    reason:
+      text: C1 spec L38「`tests/smoke_*.py` 保持原样；`gis/` 无行为性修改」条款后 L39 追加 ⚠️ 注记，点名三个
+        smoke 文件（C10）与 gis/preflight.py（C12），并指向
+        docs/comet/specs/README.md；9db9849 对 C1 spec 为 +1/-0，原文未改。
+      truncated: false
+  - id: A9
+    source: specs/c13-spec-consistency/spec.md
+    text: 标注指纹的时代口径（F3）（验收：A15） 在 `p1a-arcpy-bridge`（C2）的「优先复用 P0 缓存产物，指纹
+      `c9243efd`」句后追加 `⚠️` 时代口径注记：`c9243efd` 为 PV=2 历史值，当代金指纹为
+      `b91c09c9c6451c16`；缓存文件名含指纹（`gis/emit.py::_output_path` →
+      `{slug}.{指纹8位}.tif`）；按指纹指名缓存的判据必须随 `PROCESSING_VERSION` 时代取值（C10 已把该口径立为验收
+      A1/A2）。原文不改。
+    result: passed
+    reason:
+      text: C2 spec L11「优先复用 P0 缓存产物，指纹 `c9243efd`」句后 L12 追加时代口径注记：PV=2 历史值、当代金指纹
+        b91c09c9c6451c16、缓存名 `gis/emit.py::_output_path → {slug}.{指纹8位}.tif`、必须随
+        PROCESSING_VERSION 时代取值（C10 A1/A2）；+1/-0，原文未改。
+      truncated: false
+  - id: A10
+    source: specs/c13-spec-consistency/spec.md
+    text: 回收 C10 的四列差异清单进归档面（F4）（验收：A16） 把主工作区 gitignored 的
+      `logs/acceptance/c10-local-changes.md`（112 行）**逐字复制**为
+      `docs/comet/archive/2026-10-08-c10-review-patches/local-changes.md`（git
+      跟踪），仅在文件头部（既有 `> 位置说明` 块之前）追加一行来历注记说明「原件位置 + 由 c13-spec-consistency 回收 +
+      正文未改动」。除此之外正文逐字相同；原 `logs/` 副本保留不动。
+    result: passed
+    reason:
+      text: 归档件 local-changes.md 存在且 git 跟踪；与原件
+        logs/acceptance/c10-local-changes.md（主工作区，112 行）的 diff = 纯插入
+        `2a3,5`，插入点在文件头部、`> 位置说明` 块之前，内容含原件位置 + 由 c13-spec-consistency 回收 +
+        正文一字未改；其余正文逐字相同（首尾字节比对一致），原 logs/ 副本仍在盘上未动。注记渲染为 1 个引用块、物理 3
+        行（执行记录已如实写明「新增 3 行、删除 0 行」）。
+      truncated: false
+  - id: A11
+    source: specs/c13-spec-consistency/spec.md
+    text: capability 命名与目录名对齐（F5）（验收：A17） `docs/comet/specs/dockpane/spec.md` 的 H1
+      改为 `# Capability：dockpane —— Pro add-in 状态面板（change c11-dockpane 交付；C9/C10
+      拆出的唯一遗留项）`；`docs/comet/specs/p2-presets/spec.md` 的 H1 改为 `#
+      Capability：p2-presets —— 数据集预设表（dataset presets）`。正文其余不动，双副本同步。
+    result: passed
+    reason:
+      text: dockpane H1 = `# Capability：dockpane —— Pro add-in 状态面板（change
+        c11-dockpane 交付；C9/C10 拆出的唯一遗留项）`、p2-presets H1 = `#
+        Capability：p2-presets —— 数据集预设表（dataset presets）`，发布面与归档面四份逐字符相同；9db9849
+        对二者分别 +12/-11（H1 1 行 + 10 个标题补引用 + 1 注记）与 +1/-1（仅 H1），正文其余未动。
+      truncated: false
+  - id: A12
+    source: specs/c13-spec-consistency/spec.md
+    text: 补齐 5 份 spec 的验收引用（F6）（验收：A18） 为
+      C7（`p3-skill-knowledge`）、C8（`p3-osm-overpass`）、C9（`p1b-arcgis-addin`）、C10（`c10-review-patches`）、C11（`dockpane`）五份
+      spec 的**每个** `### Scenario:` 标题补 `（验收：Ax）`，映射以 `spec-revision-list.md` 的
+      §F6 映射表为准（Scenario 数与 acceptance 数 1:1：5/5、8/8、8/8、9/9、10/10，合计 **40** 个
+      Scenario）。只补引用，不改任何判据文字；双副本同步。
+    result: passed
+    reason:
+      text: 五份 spec 的 `### Scenario:` 计数/带引用计数 = 5/5、8/8、8/8、9/9、10/10，合计 40；9db9849
+        的删除行全部能以「去掉（验收：Ax）后相同」在新增行中配对（orphan=NONE），证明只补引用未改判据；发布面/归档面 numstat
+        成对相同。
+      truncated: false
+  - id: A13
+    source: specs/c13-spec-consistency/spec.md
+    text: 台账补号（F7）（验收：A19） `docs/README.md` §9.2 中 C3 行的 `✅ 归档（2026-10-06，三轮独立验收
+      8/8）` 补上经核实的真实归档提交号。因该文件为 gitignored 本地件，按 D9 只产出**四列差异清单条目**（现状逐字 + 改为 +
+      依据含提交号核实方式 + 回退），由归档轮就地执行。
+    result: passed
+    reason:
+      text: 归档 spec-revision-list.md §F7 四列齐备（现状逐字含 `✅ 归档（2026-10-06，三轮独立验收
+        8/8）`、改为、依据、回退）；提交号核实方式与结果登记在同文件 F7 执行记录行（1fae53d，方法 `git log
+        --diff-filter=A --
+        docs/comet/archive/2026-10-06-p2-timeseries/comet-state.yaml`）。我按该方法复跑得到同一
+        1fae53d（真实提交），且主工作区 docs/README.md L406 已就地执行为 `✅ 归档（2026-10-06，三轮独立验收
+        8/8；提交 1fae53d）`。
+      truncated: false
+  - id: A14
+    source: specs/c13-spec-consistency/spec.md
+    text: 措辞与实现对齐（F8）（验收：A20） `c12-preflight-endpoint-probe` spec
+      的「测试全部离线且不污染本机」场景中，「进程内起假服务器」改为「子进程承载的假服务器」并说明原因（`tests/unit` 受离线守卫约束不得导入
+      `socket`/`http`/`urllib`，故假服务必须外置为 `subprocess` + `sys.executable
+      -c`）。双副本同步。
+    result: passed
+    reason:
+      text: c12 spec L52 场景「测试全部离线且不污染本机（验收：A16）」正文 L54 已是「**子进程承载的假服务器**（`subprocess`
+        + `sys.executable -c`…）」并写明原因（tests/unit 受离线守卫约束不得导入
+        socket/http/urllib）；旧表述「进程内起假服务器」全文 0
+        命中；发布面/归档面哈希相同；test_offline_guard.py 的 BANNED 名单（含
+        socket/http/urllib）印证理由。
+      truncated: false
+  - id: A15
+    source: specs/c13-spec-consistency/spec.md
+    text: 结构不变量守卫（G1）（验收：A21） 新增
+      `tests/unit/test_comet_spec_consistency.py`（离线、只读文件、不导入网络库），断言四条不变量： 1.
+      `docs/comet/specs/<cap>/spec.md` 的 H1 形如 `# Capability：<cap> —— …`（cap
+      恰为目录名）； 2. 每个发布面 spec 在 `docs/comet/archive/*/specs/<cap>/spec.md`
+      有**逐字节相同**的副本； 3. 每个 `### Scenario:` 标题都带 `（验收：A…）` 引用； 4. 每个归档 change 目录含
+      `brief.md`、`comet-state.yaml`、`verification.md`、`specs/*/spec.md`。
+      该守卫在本次修订**之后**必须全绿；对任一不变量的破坏（例如改名 H1、删副本、去引用）必须使它失败。 > ⚠️ **c20 修订（不变量 4
+      的豁免）**：原句要求**每个**归档 change 目录都含 `specs/*/spec.md`， > 未考虑 Comet Runtime
+      的「**不改变产品行为**」豁免 —— change 的 `brief.md` 写一行合规声明即可 > 免写目标 Spec，此类 change
+      归档后其归档目录**本来就没有** `specs/`，原判据会让本守卫长期转红 > （c19-verify-report-drift 归档后
+      main 全量单测 393 例 1 失败即此）。现判定改为：归档目录必须含 >
+      `brief.md`/`comet-state.yaml`/`verification.md`；`specs/*/spec.md`
+      缺失时，**仅当** `brief.md` 的 > 可见行（排除标题行与围栏内代码）含合规豁免声明 —— 形如 `不改变产品行为` /
+      `不涉及产品行为` / > `仅文档` / `no product behavior change` / `documentation-only`
+      后紧跟 `：` 或 `:`，且理由非占位 > （空、`<…>`、`{{…}}`、TODO/待填写一类）—— 才放行。判据与 Runtime 的
+      `hasExplicitSpecExemption` / > `isPlaceholderExemptionReason`
+      同源。原句保留不删；实现见 `tests/unit/test_comet_spec_consistency.py` > 的
+      `archive_completeness_problems` / `spec_exemption_reason`。
+    result: passed
+    reason:
+      text: guard 只 import os/pathlib/re/tempfile/unittest（无网络库），test_offline_guard
+        在全量批次内通过；四类不变量分别由 PublishedSpecSurfaceTest / PublishedArchivePairTest /
+        ScenarioAcceptanceReferenceTest /
+        ArchiveCompletenessTest(+ArchiveSpecExemptionTest)
+        断言；本次修订后全绿。我在临时假仓库逐条破坏：改 H1、改一份归档副本、去掉一个标题引用、删 specs 且无豁免、造孤儿 capability
+        —— 每次只有对应断言转红，完整基线与合规豁免样本全绿。
+      truncated: false
+  - id: A16
+    source: specs/c13-spec-consistency/spec.md
+    text: 条款级 supersession 索引（G2）（验收：A22） 新增 `docs/comet/specs/README.md`：列出
+      F1/F2/F3/F8 四条的条款级条目（被取代方 → 取代方 → 日期 → 一句话说明），并写明发布面四条规范：capability 命名 =
+      发布面目录名；每个 Scenario 必须带验收引用；按指纹指名缓存必须随时代取值；spec 双副本必须逐字节一致。
+    result: passed
+    reason:
+      text: docs/comet/specs/README.md 存在；§一 台账含 F1（C9 6530 条 + C11 三探测条两行）、F2（C1
+        行）、F3（C2 指纹行）的条款级条目（被取代方/取代方/日期/说明），F8 列在「就地订正」表；§二
+        逐条写明四条发布面规范（capability 命名=目录名；Scenario
+        必须带标题内引用；按指纹指名缓存必须随时代取值；双副本逐字节一致）。
+      truncated: false
+  - id: A17
+    source: specs/c13-spec-consistency/spec.md
+    text: 不变量与回归（A11）（验收：A23） 修订完成后：发布面 specs ↔ 归档副本**逐字节一致**（含修订后的 12
+      份）；`gis/**`、`Pro/**`、`scripts/**`、`geocode.json` 零 diff；`gis/spec.py` 的
+      `PROCESSING_VERSION = 3` 未改；`python -m unittest discover -s tests/unit` 与
+      `python -m unittest tests.unit.test_spec_basics` 两条入口全绿（含新增守卫）。
+    result: passed
+    reason:
+      text: 独立脚本核对 16/16 发布面 spec 均有逐字节相同的归档副本（0 缺副本/0
+        不一致）；gis/**、Pro/**、scripts/**、geocode.json 对本 change 零 diff；gis/spec.py
+        L45 `PROCESSING_VERSION = 3`；两条入口实跑全绿（discover -s tests/unit = 399 OK
+        skipped=10；tests.unit.test_spec_basics = 20 OK）。场景括注「含修订后的 12 份」是 C13
+        时代数量，今日 16 份全部满足该不变量（更严格成立）。
+      truncated: false
+  - id: A18
+    source: specs/c13-spec-consistency/spec.md
+    text: 修订清单回填（A12）（验收：A24） `spec-revision-list.md` 的 8
+      条全部四列齐备（现状/改为/依据/回退），且执行后逐条回填执行状态与证据（涉及文件行号、双副本一致性校验方式、F4 的 diff 结论、F6 的
+      40 个 Scenario 计数、F7 的提交号核实方式）。
+    result: passed
+    reason:
+      text: 归档 spec-revision-list.md 的 F1–F8
+        每条都有「现状/改为/依据/回退」四列；文末执行记录逐条回填状态（F1–F8、G1、G2、A12；F7 如实标 ⏳ 待归档轮执行，与 D9
+        一致）与证据：F1 给出 C9 L57 与 C11 段落锚点及双副本逐字节一致方式、F4 给出 diff 结论（新增 3 行、删除 0
+        行，5800→6003 字节）、F6 给出 40 条计数（5+8+8+9+10）、F7 给出提交号核实方式。
+      truncated: false
+builder_handoff:
+  candidate_id: 7bcfea18-8bd4-4ad0-81c2-b796ab5ef77b
+  identity_provider: skill-coordinated
+  builder_execution_ref: skill-coordinated:builder:7fc0751c-f477-4b6d-bdff-ddb66d14106e
+  iteration: 1
+  summary:
+    text: c20 修掉 c19 归档暴露的结构守卫契约缺口：不变量 4 现在认识 Comet Runtime 的「不改变产品行为」豁免。改动面四处 ——
+      tests/unit/test_comet_spec_consistency.py（只动 ArchiveCompletenessTest 一段：抽出
+      archive_completeness_problems / spec_exemption_reason；另加
+      ArchiveSpecExemptionTest 6
+      条）；docs/comet/specs/c13-spec-consistency/spec.md（Scenario G1 正文补 10 行 ⚠️
+      c20 修订注记，numstat 10 增 0 删）；其归档副本逐字节同步（三副本同哈希 ca500e74db690c93 / 8325
+      B）；docs/comet/specs/README.md 就地订正表追加一行。开发期实跑：守卫模块 14 例 OK、全量 399 例 OK（既有
+      393 例中的 1 例红消失 + 新增 6 例）、uvx --offline ruff@0.17.0 check
+      零告警、test_spec_basics 20 例 OK；before/after 对照与 9 个合成用例演示在
+      logs/acceptance/。零
+      diff：gis/**、Pro/**、scripts/**、geocode.json、tests/verify_all.py、tests/smoke_*.py、PROCESSING_VERSION
+      与金指纹未动。改动已提交为 448fbe2。
+    truncated: false
+  addressed_acceptance_ids:
+    - A1
+    - A2
+    - A3
+    - A4
+    - A5
+    - A6
+    - A7
+    - A8
+    - A9
+    - A10
+    - A11
+    - A12
+    - A13
+    - A14
+    - A15
+    - A16
+    - A17
+    - A18
+  acceptance_review:
+    - id: A1
+      status: implemented-with-evidence
+      evidence:
+        - logs/acceptance/c20_a1a3_demo.txt 第 1 行：[PASS] A1 合规豁免声明：期望放行 ->
+          实际放行（零问题）
+        - tests/unit/test_comet_spec_consistency.py::ArchiveSpecExemptionTest::test_exempt_change_without_spec_is_accepted
+        - tests/unit/test_comet_spec_consistency.py::ArchiveCompletenessTest::test_archive_dirs_have_required_artifacts
+          —— 对真实 docs/comet/archive/ 跑零问题（c19 那个无 specs/ 的归档目录已被放行）
+      note: archive_completeness_problems 在 specs/*/spec.md 缺失时调用
+        spec_exemption_reason(brief.md)；后者只看可见行（排除标题与围栏、先剥 HTML 注释），命中
+        SPEC_EXEMPTION_RE 且理由非占位才返回理由，合规即不再计入问题列表。
+    - id: A2
+      status: implemented-with-evidence
+      evidence:
+        - "logs/acceptance/c20_a1a3_demo.txt 第 2 行：[PASS] A2 无豁免声明 -> 实际转红，消息
+          'sample-change: 缺  无 specs/*/spec.md 且 brief.md 未声明合规的「不改变产品行为」豁免'"
+        - tests/unit/...::ArchiveSpecExemptionTest::test_change_without_spec_and_without_exemption_is_rejected（断言问题数=1、含目录名与「无
+          specs/*/spec.md」）
+        - tests/unit/...::ArchiveSpecExemptionTest::test_archive_root_missing_is_reported
+      note: 放行是显式条件分支而不是「缺 specs/ 就跳过」：不满足豁免时仍生成问题描述（brief.md 存在时补一句为何判红），目录名始终点名。
+    - id: A3
+      status: implemented-with-evidence
+      evidence:
+        - logs/acceptance/c20_a1a3_demo.txt：占位理由空 / <TODO> /
+          {{reason}}、标题行里的豁免、围栏里的豁免、HTML 注释里的豁免 —— 六种形态全部转红；另有「有合规豁免但缺
+          verification.md」-> 转红（消息 '缺 [\'verification.md\']'）；9 个合成用例，失败 0
+        - tests/unit/...::ArchiveSpecExemptionTest::test_placeholder_exemption_reason_is_rejected（subTest
+          逐个断言 空/空白/<TODO>/{{reason}}/待填写/TODO）
+        - tests/unit/...::ArchiveSpecExemptionTest::test_exemption_must_be_a_visible_line（标题行
+          / 围栏内 / HTML 注释）
+        - tests/unit/...::ArchiveSpecExemptionTest::test_missing_required_artifact_is_still_rejected
+      note: 占位判据镜像 Runtime 的 isPlaceholderExemptionReason；可见行判据镜像
+        hasExplicitSpecExemption。
+    - id: A4
+      status: implemented-with-evidence
+      evidence:
+        - "logs/acceptance/c20_a4_guard_main_before.txt —— 修好前（main 上只读跑）：Ran 8
+          tests, FAILED (failures=1)，'2026-10-18-c19-verify-report-drift: 缺  无
+          specs/*/spec.md'，EXIT=1"
+        - logs/acceptance/c20_a4_guard_c20.txt —— 修好后：Ran 14 tests, OK, EXIT=0
+        - logs/acceptance/c20_a4_full_c20.txt —— unittest discover -s
+          tests/unit：Ran 399 tests, OK (skipped=10), EXIT=0
+        - logs/acceptance/c20_a4_ruff.txt —— uvx --offline ruff@0.17.0 check：All
+          checks passed!
+      note: 全量用例数由 393 升到 399：393 是改动前基数，本 change 在守卫文件新增 6 条用例（见 known_limits 第 1
+        条）。c19 归档造成的那 1 例红已消失。
+    - id: A5
+      status: implemented-with-evidence
+      evidence:
+        - logs/acceptance/c20_a5_zero_diff.txt —— 首行打印 pwd 证实量的是 c20
+          worktree；gis/、Pro/、scripts/、geocode.json、tests/verify_all.py、'tests/smoke_*.py'、tests/unit/_helpers.py
+          的 git diff --stat 全空；gis/spec.py 零 diff
+        - 同文件：金指纹现值 grep 命中 _helpers.py 的 PV3 注释；git status --porcelain
+          全量清单；docs/comet/specs/ 下改动面
+      note: git status 实测只有四行既有文件修改（c13 spec 发布面 + 其归档副本 + specs/README.md +
+        tests/unit/test_comet_spec_consistency.py）加工作流产物 ?? docs/comet/changes/。
+    - id: A6
+      status: implemented-with-evidence
+      evidence:
+        - logs/acceptance/c20_a6_dual_copy.txt —— 发布面/归档面/change 暂存三副本均 sha256
+          ca500e74db690c93、8325 bytes
+        - 同文件：修订后 spec 的 Scenario 引用核对 —— 带（验收：A…）12 个、不带 0 个
+        - 同文件：台账新增行第 38 行；git diff --numstat 三处均「增 10 删 0 / 增 1 删 0 / 增 10 删 0」
+      note: spec 修订采用 C13/C17 先例的「原文保留 + ⚠️ 注记」形态；三处副本由同一次写出的同一字符串产生。
+    - id: A7
+      status: implemented-with-evidence
+      evidence:
+        - docs/comet/specs/README.md 台账第 18–20 行（p1b-arcgis-addin / dockpane /
+          core-contract-unit-tests 三条 supersession 行）
+        - docs/comet/archive/2026-10-08-c13-spec-consistency/spec-revision-list.md
+          的 F1 条目（第 15 行起，四列：现状/改为/依据/回退）
+      note: 本 change 不改这些条款；只改同一份 spec 的 G1 场景并在台账追加一行，台账结构与既有条目未被破坏。
+    - id: A8
+      status: implemented-with-evidence
+      evidence:
+        - docs/comet/specs/README.md 台账第 20 行（core-contract-unit-tests 的 C1
+          范围声明被 C10 与 C12 修订）
+      note: 同上：本 change 未触碰该行。
+    - id: A9
+      status: implemented-with-evidence
+      evidence:
+        - docs/comet/specs/README.md 台账第 21 行（p1a-arcpy-bridge 的 c9243efd →
+          当代金指纹 b91c09c9c6451c16 的时代口径）
+        - tests/unit/_helpers.py 仍是金指纹单一事实源（本 change 零
+          diff）；tests/unit/test_fingerprint_literals.py 在 399 例全量中通过
+      note: 本 change 未新增任何指纹字面量：新增用例里的文件名用中性名（早期草稿被该守卫抓出过硬编码指纹，已改）。
+    - id: A10
+      status: implemented-with-evidence
+      evidence:
+        - docs/comet/archive/2026-10-08-c10-review-patches/local-changes.md 第 3
+          行：「来历（2026-10-08 由 c13-spec-consistency 回收）：本文件是 C10 归档时的四列差异清单原件」
+        - docs/comet/archive/2026-10-08-c13-spec-consistency/spec-revision-list.md
+          的 F4 条目（第 42 行起）与 F7 条目（第 69 行起）
+      note: 本 change 未触碰载体回收结果；该场景的真假值不因本 change 改变。
+    - id: A11
+      status: implemented-with-evidence
+      evidence:
+        - 实测：docs/comet/specs/*/spec.md 共 16 份，其中 H1 形如 '# Capability：' 的也是 16
+          份（16/16）
+        - 守卫不变量
+          1（test_h1_declares_capability_name_matching_directory、test_placeholder_h1_absent）在本
+          change 的单模块运行中通过（14 例 OK）
+      note: 本 change 不新增 capability、不改任何 spec 的 H1。
+    - id: A12
+      status: implemented-with-evidence
+      evidence:
+        - 守卫不变量
+          3（test_every_scenario_carries_acceptance_reference、test_no_standalone_acceptance_reference_line）通过
+        - 本 change 修订的那份 spec 实测：12 个 Scenario 全部带（验收：A…），不带引用的 0
+          个（logs/acceptance/c20_a6_dual_copy.txt）
+      note: 本 change 的 spec 修订只追加正文注记，未动任何 Scenario 标题与引用。
+    - id: A13
+      status: implemented-with-evidence
+      evidence:
+        - docs/comet/specs/README.md 第 16–34 行的两张表（条款级 supersession / 就地订正）
+        - 本 change 在「就地订正」表追加第 38 行（c13-spec-consistency 的不变量 4 豁免修订）
+      note: 本 change 只追加一行，未改动既有登记内容。
+    - id: A14
+      status: implemented-with-evidence
+      evidence:
+        - docs/comet/specs/c12-preflight-endpoint-probe/spec.md 第 54
+          行含「子进程承载的假服务器」措辞（实测 grep 命中）
+      note: 本 change 未触碰该 spec。
+    - id: A15
+      status: implemented-with-evidence
+      evidence:
+        - tests/unit/test_comet_spec_consistency.py 的本 change 修订：不变量 4 增加豁免识别；新增
+          ArchiveSpecExemptionTest 6 例
+        - 守卫单模块 Ran 14 tests, OK（logs/acceptance/c20_a4_guard_c20.txt）
+        - logs/acceptance/c20_a1a3_demo.txt 的 9 个合成用例
+      note: 本场景是 c20 的直接作用对象：不变量 4 的判定被修订为「合规豁免才放行」，不变量 1/2/3 语义未动。
+    - id: A16
+      status: implemented-with-evidence
+      evidence:
+        - docs/comet/specs/README.md 存在且含条款级 supersession
+          表与「二、发布面四条规范」（四条：命名=目录名 / Scenario 带引用 / 指纹随时代取值 / 双副本逐字节一致）
+      note: 本 change 只在该文件追加一行，未改动规范正文。
+    - id: A17
+      status: implemented-with-evidence
+      evidence:
+        - 发布面 specs ↔ 归档副本逐字节一致：守卫不变量 2 通过；本 change 修订的 c13 spec
+          三副本同哈希（ca500e74db690c93）
+        - gis/**、Pro/**、scripts/**、geocode.json 本 change 零
+          diff（logs/acceptance/c20_a5_zero_diff.txt）
+        - PROCESSING_VERSION = 3 未改（gis/spec.py 零 diff）
+        - 两条入口全绿：unittest discover -s tests/unit -> Ran 399 tests, OK；unittest
+          tests.unit.test_spec_basics -> Ran 20 tests, OK
+      note: 场景括注「（含修订后的 12 份）」是 C13 当时的发布面 spec 数量，今日为 16 份（本 change 未增删
+        capability）；括注属历史范围描述，逐字节一致的要求本身持续成立。此点已在本交接与 Shape 摘要中显式披露。
+    - id: A18
+      status: implemented-with-evidence
+      evidence:
+        - docs/comet/archive/2026-10-08-c13-spec-consistency/spec-revision-list.md
+          存在，第 1 行标题即「四列：现状 / 改为 / 依据 / 回退」；条目 F1–F8（+F6b）齐备（第
+          15/24/33/42/51/60/69/78/89 行）
+        - 同文件有「执行记录（2026-10-08 Build 轮）」小节（第 131 行）作为回填证据
+      note: 本 change 未触碰该文件。
+  checks:
+    - name:
+        text: tests/unit/test_comet_spec_consistency.py（守卫单模块）
+        truncated: false
+      result: passed
+      note:
+        text: Ran 14 tests, OK；修好前 main 上为 8 tests / 1 failed
+        truncated: false
+    - name:
+        text: python -m unittest discover -s tests/unit（全量）
+        truncated: false
+      result: passed
+      note:
+        text: Ran 399 tests, OK (skipped=10)；既有 393 例零回归 + 新增 6 例
+        truncated: false
+    - name:
+        text: python -m unittest tests.unit.test_spec_basics
+        truncated: false
+      result: passed
+      note:
+        text: Ran 20 tests, OK
+        truncated: false
+    - name:
+        text: uvx --offline ruff@0.17.0 check
+        truncated: false
+      result: passed
+      note:
+        text: All checks passed!
+        truncated: false
+    - name:
+        text: 合成用例豁免判定演示（logs/acceptance/c20_exemption_demo.py）
+        truncated: false
+      result: passed
+      note:
+        text: 9 个用例：合规豁免放行、无豁免/占位/不可见形态/缺必备件全部转红
+        truncated: false
+    - name:
+        text: A5 零 diff / A6 双副本与台账核对
+        truncated: false
+      result: passed
+      note:
+        text: 见 logs/acceptance/c20_a5_zero_diff.txt 与 c20_a6_dual_copy.txt
+        truncated: false
+  checks_truncated: false
+  known_limits:
+    - text: A4 的字面数字与实测不同：brief 的 A4 写「全量 393 例 OK」，那是改动前基数；本 change 新增 6 条用例，实测 399 例
+        OK。既有 393 例全部通过、c19 造成的那 1 例红已消失。
+      truncated: false
+    - text: 验收项由 6 增至 18：本轮 Shape 重认时目标 Spec 首次就位，Runtime 为该能力完整规格里的 12 个既有 Scenario
+        各生成一条验收（brief 6 + spec 12）。A7–A18 即这 12 条 C13 时代的场景，本 change 未改其条款。
+      truncated: false
+    - text: A17 的场景括注「（含修订后的 12 份）」是 C13 当时的发布面 spec 数量，今日为 16 份。本 change
+        只对「被自身改写真假值」的条款加 ⚠️ 注记（即不变量 4），未改写这类历史括注；若 Verifier 认为该括注需就地说明，本溱回 Build
+        补注记。
+      truncated: false
+    - text: imports 块与 c18 的合并面：c18 在 import os 后插入 import re；本 change 在 import
+        pathlib 后插入 import re 与 import tempfile。两处 hunk 相邻，若合并时该小块冲突属可读可解的局部冲突。
+      truncated: false
+    - text: 豁免判据是「镜像」Runtime（hasExplicitSpecExemption /
+        isPlaceholderExemptionReason）而非共享代码：Runtime 升级时守卫需人工同步；已写进被修订 spec 的 ⚠️
+        注记与台账。
+      truncated: false
+    - text: 守卫只核对 brief.md 是否声明了合规豁免，不核对理由与改动范围是否相称（语义级判断留给 Verifier 与人工审阅）。
+      truncated: false
+    - text: 本 change 不改 c19 归档目录既有内容（仍无 specs/，现由豁免规则放行）；也不改 c18 的 Scenario 引用形态放宽。
+      truncated: false
+    - text: 未跑 tests/verify_all.py 入口（本 change 不涉及入口契约）；Runtime 已独立执行 unit-tests 与
+        ruff 两项检查。证据文件在 logs/acceptance/（gitignore），可用 bash
+        logs/acceptance/c20_evidence.sh 复现。
+      truncated: false
+  known_limits_truncated: false
+  review: null
+  submitted_at: 2026-10-18T07:56:08.722Z
+blockers: []
+verification:
+  candidate_id: 7bcfea18-8bd4-4ad0-81c2-b796ab5ef77b
+  identity_provider: skill-coordinated
+  verifier_execution_ref: skill-coordinated:verifier:9ef869e2-40aa-464a-b879-e17b921c3021
+  iteration: 1
+  attempt: 1
+  assurance: skill-coordinated
+  verdict: pass
+  checks:
+    - id: unit-tests
+      name:
+        text: tests/unit 全量离线单测（unittest discover）
+        truncated: false
+      argv_display:
+        - text: -m
+          truncated: false
+        - text: unittest
+          truncated: false
+        - text: discover
+          truncated: false
+        - text: -s
+          truncated: false
+        - text: tests/unit
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 21709
+    - id: ruff-check
+      name:
+        text: ruff 门禁（离线，零下载）
+        truncated: false
+      argv_display:
+        - text: --offline
+          truncated: false
+        - text: ruff@0.17.0
+          truncated: false
+        - text: check
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 214
+  summary:
+    text: 独立核查（自建 26 例对立样本 + 8 例不变量敏感性样本 + 旧守卫基线复现 + 两条入口实跑 + 零
+      diff/双副本哈希/提交考古）确认：守卫对「brief.md 含合规豁免声明」的无 specs 归档目录放行（A1，含真实
+      c19），对无豁免（A2）、占位理由与缺必备件（A3）一律转红并点名；main 上那 1
+      例红（c19）确由本次修订转绿（A4，旧守卫副本实跑复现）；gis/Pro/scripts/geocode.json/tests 相关面与
+      PROCESSING_VERSION、金指纹零 diff（A5）；发布面与归档面双副本逐字节一致、台账已登记、Scenario
+      引用齐全（A6）；A7–A14、A16–A18 所述 C13 既有条款在今日仓库均成立（含「只加注记/只补引用」的逐行配对证明、C12 场景措辞与
+      40 条 Scenario 计数、F7 提交号 1fae53d 的独立复核与就地执行）。18 项全部 passed，总判定
+      pass；风险集中在「镜像而非共享代码」「豁免不核对理由相称性」与三处历史括注/措辞形态的落差，均不改变各条验收的成立。
+    truncated: false
+  risks:
+    - text: 豁免判据是「手工镜像」Runtime（hasExplicitSpecExemption /
+        isPlaceholderExemptionReason）而非共享代码。我未能在本机定位 Runtime 实现（comet 包内搜索超时、DSH
+        resources 无命中），故「同源」只能按规格 ⚠️ 注记所列判据逐条对拍（已全部对上），无法做源码级对拍；Runtime
+        若变更判据，守卫会静默漂移。
+      truncated: false
+    - text: 守卫只核对 brief.md 是否声明了合规豁免，不核对理由与改动范围是否相称：任何一行非占位文字即可放行无 specs 的归档目录。这是本
+        change 选定的判据（镜像 Runtime），但语义层面仍可被滥用。
+      truncated: false
+    - text: 豁免正则在可见行内做 search：句中表述（如「本 change
+        不改变产品行为：只改文档」）也算声明；理由写「见上」这类弱内容也放行（不在空/<…>/{{…}}/TODO/待填写 的占位枚举内）。属从宽边界。
+      truncated: false
+    - text: A4 的「393 例」与 A17 的「（含修订后的 12 份）」是历史基数/历史括注：实测今日为 399 例、16 份发布面
+        spec。子项均成立，但文字与今日事实有落差，后续读者按字面核对会误判。
+      truncated: false
+    - text: docs/comet/specs/README.md §三「机械守卫」描述仍写「每个归档 change 目录含 …
+        specs/*/spec.md」，未同步本次豁免（该行不在任何验收项内，属台账自身措辞滞后）。
+      truncated: false
+    - text: 三处形态与字面表述有细微差别，均已在执行记录中如实披露、信息齐全：A10 的「追加一行来历注记」实际是 3 行折行引用块；A13 的 F7
+        提交号与核实方式落在执行记录行而非「依据」列；A16 的 F8 条目为 3 列表格（取代方 C13 写在日期单元格）。
+      truncated: false
+  risks_truncated: false
+  completed_at: 2026-10-18T08:09:15.965Z
+history:
+  - goal_cycle: 1
+    iteration: 1
+    attempt: 0
+    outcome: recovery
+    unresolved_ids: []
+    summary:
+      text: Native target specification declarations changed
+      truncated: false
+    completed_at: 2026-10-18T07:50:54.037Z
+  - goal_cycle: 2
+    iteration: 1
+    attempt: 1
+    outcome: pass
+    unresolved_ids: []
+    summary:
+      text: 独立核查（自建 26 例对立样本 + 8 例不变量敏感性样本 + 旧守卫基线复现 + 两条入口实跑 + 零
+        diff/双副本哈希/提交考古）确认：守卫对「brief.md 含合规豁免声明」的无 specs 归档目录放行（A1，含真实
+        c19），对无豁免（A2）、占位理由与缺必备件（A3）一律转红并点名；main 上那 1
+        例红（c19）确由本次修订转绿（A4，旧守卫副本实跑复现）；gis/Pro/scripts/geocode.json/tests 相关面与
+        PROCESSING_VERSION、金指纹零 diff（A5）；发布面与归档面双副本逐字节一致、台账已登记、Scenario
+        引用齐全（A6）；A7–A14、A16–A18 所述 C13 既有条款在今日仓库均成立（含「只加注记/只补引用」的逐行配对证明、C12
+        场景措辞与 40 条 Scenario 计数、F7 提交号 1fae53d 的独立复核与就地执行）。18 项全部 passed，总判定
+        pass；风险集中在「镜像而非共享代码」「豁免不核对理由相称性」与三处历史括注/措辞形态的落差，均不改变各条验收的成立。
+      truncated: false
+    completed_at: 2026-10-18T08:09:15.965Z
+history_overflow:
+  dropped_entries: 0
+  first_dropped_at: null
+  last_dropped_at: null
+  outcome_counts:
+    pass: 0
+    fail: 0
+    blocked: 0
+    execution-error: 0
+    recovery: 0
+verification_result: pass
+verification_report: verification.md
+archived: true
+created_at: 2026-10-18T07:42:10.117Z
