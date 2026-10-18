@@ -53,9 +53,15 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-# UTF-8 输出包装；模块级引用保活，避免 smoke_all 再包一层时旧 wrapper 被 GC 后关掉底层 buffer
-_utf8_stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-_utf8_stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+# UTF-8 输出包装；模块级引用保活，避免 smoke_all 再包一层时旧 wrapper 被 GC 后关掉底层 buffer。
+# c22 #3：必须 write_through=True —— tests/smoke_all.py 被 import 时会**再包一层** sys.stdout，
+# 而本模块这份 wrapper 被保活着、不会被 GC，于是它内部缓冲的内容（横幅 /「启动 daemon…」/
+# 「daemon 就绪」）在 sys.stdout 被替换后**再没有人 flush**，重定向到文件或管道时整段丢失。
+# write_through 让每次写入直达底层 buffer，从根上消除这类「看得见的输出凭空消失」。
+_utf8_stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace",
+                                write_through=True)
+_utf8_stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace",
+                                write_through=True)
 sys.stdout = _utf8_stdout
 sys.stderr = _utf8_stderr
 
@@ -567,7 +573,8 @@ def build_checks() -> list[Check]:
             c.probe = probe_render
             checks.append(c)
         else:
-            reason = (f"当代指纹缓存缺失：data/derived/{p0_tif} "
+            # c22 #4：与 rescan-big 同口径 —— 只陈述「本次执行根下」，不断言别处有无。
+            reason = (f"当代指纹缓存不可用：本次执行根下 data/derived/{p0_tif} "
                       + ("不存在" if not p0_path.exists() else f"过小（{p0_size} B ≤ {CACHE_MIN_BYTES} B）")
                       + "，_ensure_raster 会走联网路径现场生成；联网跑一次后本项自动转 RUN。"
                       "渲染 spec 结构面已由 tests-unit 的 test_layout_spec/test_overlay_spec 离线覆盖；"

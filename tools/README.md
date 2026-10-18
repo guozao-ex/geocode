@@ -127,11 +127,12 @@ python tools/verify_facts_check.py --json
 > git 仓库内时会静默回落到「主工作区根 = 事实根」（此时 `P6` 退化为同根核对）。
 
 **主工作区 / worktree 的差异（重要）**：`data/` 与 `logs/*` 都在 `.gitignore` 里，因此
-linked worktree **没有** `data/`、也没有主工作区那份 `logs/verify_all_report.json`。
+linked worktree 只有**空的** `data/` 目录树（`data/derived/` 等子目录在、但**没有产物**），
+也没有主工作区那份 `logs/verify_all_report.json`。
 于是：
 
 - 在 worktree 里跑 `tests/verify_all.py` 生成的报告，其 `cache_probe` 必然 `hit=false`
-  （该根下确实没有 `data/derived/...`），对应项按 `skip` 落层、措辞写「不存在」——这是**一致**的；
+  （该根下确实没有 `data/derived/` 下的产物），对应项按 `skip` 落层、措辞写「不存在」——这是**一致**的；
 - 拿这样一份报告去比对主工作区（`--facts-root D:/DEV/geocode`）就会红：主工作区**确有**该产物，
   而报告声称不存在 —— 这正是「跨根核对」要抓的失配。
 

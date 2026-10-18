@@ -121,6 +121,14 @@ tests/unit 全量用例、tui-timeseries-probe、daemon-endpoint-probe（及前�
 > `uvx --offline` 执行（零外网请求）。「全程对外网请求为零」的口径不变，
 > 仍是本场景的硬断言。原文保留不删，修订依据见 `docs/comet/specs/README.md`。
 
+> ⚠️ **c22 修订（2026-10-18，用户裁决口径）**：上一条 c17 注记称「全程对外网请求为零」的口径不变、
+> 仍是硬断言 —— 经实测该表述**不成立**：当代缓存命中时 `smoke-map-renderers-arcpy` 会拉起
+> `arcgispro-py3` 子进程，后者在渲染期间回连 Esri 许可/basemap 服务（观测到 443/80 出站约 12 s+；
+> `smoke-map-renderers-qgis` 一侧未观测到外连）。故本场景断言**收窄为「入口自身发起的对外请求为零」**：
+> 覆盖 python 主进程、入口自带的 daemon 探针与既有 smoke/单测（仅访问 127.0.0.1 且探针显式禁代理）；
+> **arcpy / QGIS 渲染子进程属第三方运行时（ArcGIS Pro / QGIS），其厂商回连不计入本断言** ——
+> 它们是「离线可跑」（不依赖网络即可产出）而非「零外网」。原文与 c17 注记均保留不删。
+
 ### Scenario: 在线依赖项显式跳过（验收：A11）
 
 smoke_emit、smoke_three_exits、smoke_presets、smoke_timeseries、smoke_osm、smoke_tui、smoke_map_renderers（缓存未命中时）、smoke-array-chunking-rescan-big（前置产物缺失时）被标记 SKIP，报告中可见原因与单独复跑方式；入口不提供 --online 开关。
@@ -136,7 +144,18 @@ smoke_emit、smoke_three_exits、smoke_presets、smoke_timeseries、smoke_osm、
 
 ### Scenario: 既有资产行为零修改（验收：A13）
 
-tests/ 下 9 个 smoke 与 tests/unit 的既有代码在本 change 中不被修改（git diff 为空）；入口仅编排运行。
+tests/ 下 **10 个** smoke（含 `smoke_all.py` 汇总器）与 tests/unit 的既有代码在本 change 中不被修改（git diff 为空）；入口仅编排运行。
+
+> **c22 就地订正（2026-10-18）**：原句写「9 个 smoke」—— C14 立此条时盘上确为 9 个，其后
+> `tests/smoke_all.py`（汇总器）入库成为第 10 个，计数随之失准。断言本体（既有 smoke 与
+> tests/unit 零修改）不受影响；此处只订正计数并注明沿革，登记于
+> `docs/comet/specs/README.md` 的「就地订正」表。
+
+> ⚠️ **c22 范围说明（2026-10-18）**：本条约束的是「入口**编排**既有资产、而不改写它们的行为」。
+> c22 为修一处测试健壮性问题（工具文件缺失时整个 tests/unit 因硬 import 整片红）**修改了
+> `tests/unit/test_verify_report_tools.py` 的 import 形态与 skip 语义** —— 不改其中任何一条断言。
+> 故本场景对 c22 的判读是：10 个 smoke 全部零 diff、tests/unit 除该模块外零 diff，且该模块的
+> 41 条断言在工具齐备时行为与改动前完全一致（实测 41 例 OK）。
 
 ### Scenario: 不真实启动 ArcGIS Pro（验收：A14）
 
@@ -190,6 +209,11 @@ QGIS 侧返回 `layout_error` 非空时，`emit_map` 判失败并把该错误写
 `tests/unit` 全量仍全绿、`uvx ruff@0.17.0 check` 零告警；`tests/smoke_three_exits.py` 与
 `tests/smoke_osm.py` 中读取 `qgz_error`/`overlay_errors` 的代码**未被修改**且判错语义不受影响；
 `tests/verify_all.py` 仍一条命令跑通，缓存命中态渲染两项 PASS 且成功产物哈希不漂移。
+
+> ⚠️ **c22 判据澄清（2026-10-18）**：末句「成功产物哈希不漂移」的**判据是「生产路径零 diff」**，
+> 不是「产出文件逐字节可复现」—— 实测 `.aprx` / `.layout.pdf` 内嵌生成时间戳，跨轮哈希必然不同；
+> `.png` / `.qgz` / `.rgb8.tif` 在同等输入下稳定。故本场景核对的是「渲染链路与产物集合未变、
+> 稳定产物跨轮一致」，`.aprx` / `.layout.pdf` 以存在性 + 结构/内容要素为准。原文保留不删。
 
 > **跨 capability 说明（2026-10-18）**：`emit_map` 的失败判定实现位于 `gis/emit.py`，
 > 其 capability 归属为 `p1a-arcpy-bridge`（该 spec 定义了 `emit_map` 的 renderer 纪律与产物面）。
