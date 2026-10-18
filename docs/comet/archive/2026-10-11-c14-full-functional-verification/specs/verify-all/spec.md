@@ -151,6 +151,12 @@ tests/ 下 **10 个** smoke（含 `smoke_all.py` 汇总器）与 tests/unit 的�
 > tests/unit 零修改）不受影响；此处只订正计数并注明沿革，登记于
 > `docs/comet/specs/README.md` 的「就地订正」表。
 
+> ⚠️ **c22 范围说明（2026-10-18）**：本条约束的是「入口**编排**既有资产、而不改写它们的行为」。
+> c22 为修一处测试健壮性问题（工具文件缺失时整个 tests/unit 因硬 import 整片红）**修改了
+> `tests/unit/test_verify_report_tools.py` 的 import 形态与 skip 语义** —— 不改其中任何一条断言。
+> 故本场景对 c22 的判读是：10 个 smoke 全部零 diff、tests/unit 除该模块外零 diff，且该模块的
+> 41 条断言在工具齐备时行为与改动前完全一致（实测 41 例 OK）。
+
 ### Scenario: 不真实启动 ArcGIS Pro（验收：A14）
 
 全量验证全程不启动 ArcGIS Pro UI 进程；add-in/arcpy 面的验证由 tests/unit 断言（test_pro_addin、test_preflight_pro_endpoint）承担，并在覆盖矩阵中体现为 add-in 探测/arcpy bridge 模块的检查项。
