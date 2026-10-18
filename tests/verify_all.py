@@ -1,4 +1,4 @@
-"""C14 全量功能自动化验证入口（verify-all capability）。
+"""全量功能自动化验证入口（verify-all capability；C14 建立，c17 改为证据感知）。
 
 一条命令跑完全部可离线执行的功能检查：
     1. tests-unit                    —— tests/unit 全量离线单测（禁网守卫约束下的 212 用例级）；
@@ -6,10 +6,17 @@
     3. tui-timeseries-probe          —— 时序 spec 驱动 TUI headless 渲染（复用 smoke_all 实现）；
     4. smoke-array-chunking-rescan-big —— 已有大网格产物离线重扫描（既有 smoke 的离线 stage）；
     5. daemon-endpoint-probe         —— 本入口新探针：/mcp initialize+tools/list、/rpc status、
-                                        /events SSE hello，仅访问 127.0.0.1，不发起外网请求。
+                                        /events SSE hello，仅访问 127.0.0.1，不发起外网请求；
+    6. smoke-map-renderers-qgis/-arcpy —— 条件项：当代指纹的 P0 栅格缓存存在（离线可跑）时入
+                                        RUN 层，缺失时 SKIP 且文案写实；
+    7. ruff-check                    —— 可选 RUN 项：uv/ruff 可用时跑 ruff 门禁并计分，
+                                        不可用（含 uv 缓存冷）时 SKIP + 安装提示，不 FAIL。
 
-在线依赖检查（需真实 GEE 像素/认证，或当代 PV 缓存未命中需联网生成）一律 SKIP 并注明原因
-与单独复跑方式；本入口不提供 --online 开关。
+c17 的目标是「报告与事实一致」：层位由盘上事实决定，SKIP 文案不得与盘上/环境事实相悖。
+条件项与可选项一律**先探条件、再定层位**，并在报告里写清判据（cache_probe / tool_probe）。
+
+在线依赖检查（需真实 GEE 像素/认证）一律 SKIP 并注明原因与单独复跑方式；
+本入口不提供 --online 开关。
 
 产出：
     - 控制台：逐检查项 [PASS/FAIL/SKIP] + 汇总 + 覆盖矩阵；
@@ -29,6 +36,7 @@ import io
 import json
 import os
 import socket
+import shutil
 import subprocess
 import sys
 import time
@@ -58,6 +66,17 @@ MCP_TOOL_NAMES = {
 }
 
 FAIL_TAIL = 1200  # 失败摘要截断长度，与 smoke_all 同口径
+
+# 缓存命中判据，与 gis/emit.py::_ensure_raster 完全一致（exists() 且 size > 4096）
+CACHE_MIN_BYTES = 4096
+
+# ruff 门禁（可选 RUN 项，c17 / Q2=a）。版本钉死在 ruff.toml 用法注释里，两处必须一致。
+RUFF_SPEC = "ruff@0.17.0"
+RUFF_CMD = ["uvx", "--offline", RUFF_SPEC, "check"]
+RUFF_INSTALL_HINT = (
+    "安装/预热：uv tool install ruff==0.17.0，或先联网跑一次 uvx ruff@0.17.0 预热缓存；"
+    "手工复跑：uvx ruff@0.17.0 check"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -123,6 +142,8 @@ class Check:
     skip_reason: str | None = None
     fail_summary: str | None = None
     note: str | None = None
+    # c17：条件项判定依据（写进报告，便于核对「层位为何是 run/skip」）
+    probe: dict | None = None
 
 
 def run_cmd(check: Check, args: list[str], timeout: int = 900) -> Check:
@@ -267,6 +288,71 @@ def tui_timeseries_probe(check: Check) -> Check:
 
 
 # ---------------------------------------------------------------------------
+# ruff 门禁（可选 RUN 项，c17）
+#
+# 定位纪律：用 uvx --offline，**绝不让 uvx 去下载**。uvx 默认会为冷缓存拉取 ruff 包，
+# 那是外网请求；--offline 在缓存缺失时直接失败，正好等价于「工具不可用」→ SKIP + 安装提示。
+# ---------------------------------------------------------------------------
+
+def _probe_ruff() -> tuple[dict, str | None]:
+    """探测 ruff 能否在**零网络**前提下执行；返回 (probe, 不可用原因 or None)。"""
+    probe: dict = {"kind": "tool_probe", "cmd": " ".join(RUFF_CMD), "uvx": None, "ok": False}
+    uvx = shutil.which("uvx")
+    probe["uvx"] = uvx
+    if not uvx:
+        return probe, ("未检测到 uvx（uv 工具链）：ruff 门禁为可选 RUN 项，缺失时不判失败。"
+                       + RUFF_INSTALL_HINT)
+    try:
+        proc = subprocess.run([uvx, "--offline", RUFF_SPEC, "--version"], cwd=str(ROOT),
+                              capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=120)
+    except Exception as e:  # noqa: BLE001 —— 探测失败按「不可用」处理，不影响其它检查项
+        return probe, f"uvx 探测异常（{type(e).__name__}: {e}）" + "；" + RUFF_INSTALL_HINT
+    if proc.returncode == 0:
+        probe["ok"] = True
+        probe["version"] = (proc.stdout or "").strip().splitlines()[-1:] or [""]
+        return probe, None
+    tail = ((proc.stderr or "") + (proc.stdout or "")).strip().splitlines()
+    detail = tail[-1] if tail else f"退出码 {proc.returncode}"
+    return probe, (f"uv 缓存中无 {RUFF_SPEC}（离线无法解析：{detail}）。" + RUFF_INSTALL_HINT)
+
+
+def build_ruff_check() -> Check:
+    """条件项：ruff 可用则 RUN（计分），否则 SKIP + 安装提示（不 FAIL）。"""
+    check = Check("ruff-check", "静态检查（ruff 门禁）", "run",
+                  note="ruff.toml：E9 / F / B / RUF012 / SIM115；uvx --offline 调用，零外网请求")
+    probe, unavailable = _probe_ruff()
+    check.probe = probe
+    if unavailable:
+        check.layer = "skip"
+        return skip_check(check, unavailable)
+    return check
+
+
+def run_ruff(check: Check) -> Check:
+    """执行 ruff 检查（已确认离线可用），零告警 PASS、有告警 FAIL。"""
+    t0 = time.time()
+    RUN_LOGS.mkdir(parents=True, exist_ok=True)
+    log_path = RUN_LOGS / f"{check.name}.log"
+    ok, out, err = False, "", ""
+    try:
+        proc = subprocess.run(RUFF_CMD, cwd=str(ROOT), capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=300)
+        ok = proc.returncode == 0
+        out, err = proc.stdout or "", proc.stderr or ""
+    except Exception as e:  # noqa: BLE001 —— 执行异常按 FAIL 记录（不炸整个入口）
+        err = f"{type(e).__name__}: {e}"
+    log_path.write_text(f"--- cmd ---\n{' '.join(RUFF_CMD)}\n\n--- stdout ---\n{out}\n\n"
+                        f"--- stderr ---\n{err}", encoding="utf-8")
+    check.duration_s = round(time.time() - t0, 1)
+    check.status = "pass" if ok else "fail"
+    check.log_path = str(log_path)
+    if not ok:
+        check.fail_summary = (out[-FAIL_TAIL:] + "\n----stderr----\n" + err[-FAIL_TAIL:])
+    return check
+
+
+# ---------------------------------------------------------------------------
 # 覆盖矩阵（README 功能面 → 检查项）
 # ---------------------------------------------------------------------------
 
@@ -286,6 +372,7 @@ MATRIX: dict[str, list[str]] = {
     "arcpy bridge（headless 出版）": ["smoke-map-renderers-arcpy"],
     "add-in 探测（端点级）": ["tests-unit"],
     "preflight": ["tests-unit"],
+    "静态检查（ruff 门禁）": ["ruff-check"],
 }
 
 
@@ -310,12 +397,15 @@ def build_checks() -> list[Check]:
     if big_artifact.exists():
         checks.append(C("smoke-array-chunking-rescan-big", "array chunking"))
     else:
+        # 措辞纪律（c17 / A2）：只陈述「本次执行根下缺失」，不断言别处有无 ——
+        # 该产物曾确实存在于主工作区盘上，旧文案「不在主工作区」与事实相悖。
         checks.append(skip_check(
             Check("smoke-array-chunking-rescan-big", "array chunking", "skip"),
-            f"前置产物缺失：C6 大网格产物 data/derived/{big_name} "
-            "不在主工作区（worktree 时代产物，未入库）；chunking 单元面已由 tests-unit 的 "
-            "test_array_chunking 离线覆盖；单独复跑：联网环境先 PYTHONPATH=. python "
-            "tests/smoke_array_chunking.py --stage big 生成产物，之后本项自动转 RUN"))
+            f"前置产物缺失：本次执行根下无 data/derived/{big_name}"
+            f"（查找路径 {big_artifact}）；产物未入库、按需生成，"
+            "chunking 单元面已由 tests-unit 的 test_array_chunking 离线覆盖；"
+            "单独复跑：联网环境先 PYTHONPATH=. python tests/smoke_array_chunking.py --stage big "
+            "生成产物，之后本项自动转 RUN"))
 
     checks.append(skip_check(
         Check("smoke-tui", "TUI", "skip"),
@@ -341,21 +431,37 @@ def build_checks() -> list[Check]:
                              "Overpass API 需网络（经 geocode.json 代理），首轮栅格建源经 GEE；"
                              "单元面已由 tests-unit 的 test_osm/test_aoi 离线覆盖；"
                              "单独复跑：联网环境 PYTHONPATH=. python tests/smoke_osm.py <cmd>"))
+    # --- 渲染两项：条件项（c17）—— 与 rescan-big 同款语义：前置产物存在即自动升 RUN ---
+    # 判据与实现对齐 gis/emit.py::_ensure_raster：目标文件存在且 > 4096 B 即复用（离线命中）；
+    # 否则会走联网路径现场生成。故「离线可跑」⇔ 缓存文件在盘且体积达标。
     p0_tif = _era_product_name("p0", "tif") or "s2_beijing_test.<指纹8位>.tif"
-    # SKIP 文案必须写实：缓存已在盘时不得再声称「未命中」
-    if (ROOT / "data" / "derived" / p0_tif).exists():
-        cache_note = (f"缓存已命中（data/derived/{p0_tif} 在盘），本项可离线复跑；"
-                      "本入口 RUN 层按 C14 验收范围维持 tests-unit / tui-timeseries-probe / "
-                      "daemon-endpoint-probe（＋前置产物存在时的 rescan-big），渲染面未入层。"
-                      "单独复跑：PYTHONPATH=. python tests/smoke_map_renderers.py qgis|arcpy")
-    else:
-        cache_note = (f"当代 PV 下 _ensure_raster 缓存未命中（data/derived/{p0_tif} 不存在），"
-                      "直接跑会走联网路径生成缓存；联网跑通一次后可离线复跑。"
-                      "渲染 spec 结构面已由 tests-unit 的 test_layout_spec/test_overlay_spec 离线覆盖")
-    checks.append(skip_check(Check("smoke-map-renderers-qgis", "三出口 emit_map（.qgz/.png 渲染）", "skip"),
-                             cache_note, note="QGIS 渲染器"))
-    checks.append(skip_check(Check("smoke-map-renderers-arcpy", "三出口 emit_map（.qgz/.png 渲染）", "skip"),
-                             cache_note, note="arcpy 渲染器 / arcpy bridge 出版链路"))
+    p0_path = ROOT / "data" / "derived" / p0_tif
+    p0_size = p0_path.stat().st_size if p0_path.exists() else 0
+    cache_hit = p0_size > CACHE_MIN_BYTES
+    probe_render = {"kind": "cache_probe", "path": f"data/derived/{p0_tif}",
+                    "exists": p0_path.exists(), "size_bytes": p0_size,
+                    "min_bytes": CACHE_MIN_BYTES, "hit": cache_hit}
+    for renderer, note in (("qgis", "QGIS 渲染器"), ("arcpy", "arcpy 渲染器 / arcpy bridge 出版链路")):
+        name = f"smoke-map-renderers-{renderer}"
+        if cache_hit:
+            c = C(name, "三出口 emit_map（.qgz/.png 渲染）")
+            c.note = f"{note}；缓存命中（data/derived/{p0_tif} 在盘且 >4096 B），离线执行"
+            c.probe = probe_render
+            checks.append(c)
+        else:
+            reason = (f"当代指纹缓存缺失：data/derived/{p0_tif} "
+                      + ("不存在" if not p0_path.exists() else f"过小（{p0_size} B ≤ {CACHE_MIN_BYTES} B）")
+                      + "，_ensure_raster 会走联网路径现场生成；联网跑一次后本项自动转 RUN。"
+                      "渲染 spec 结构面已由 tests-unit 的 test_layout_spec/test_overlay_spec 离线覆盖；"
+                      "单独复跑：联网环境 PYTHONPATH=. python tests/smoke_map_renderers.py " + renderer)
+            c = skip_check(Check(name, "三出口 emit_map（.qgz/.png 渲染）", "skip"), reason, note=note)
+            c.probe = probe_render
+            checks.append(c)
+
+    # --- ruff 门禁：可选 RUN 项（c17，Q2=a）---
+    # 关键：必须带 --offline —— uvx 默认会为冷缓存**下载** ruff，与「新增 RUN 项不得引入外网
+    # 请求」红线冲突。冷缓存/无 uv 时 --offline 会失败，按「工具不可用」归 SKIP + 安装提示。
+    checks.append(build_ruff_check())
     return checks
 
 
@@ -397,6 +503,16 @@ def main() -> int:
     if by_name["smoke-array-chunking-rescan-big"].layer == "run":
         run_cmd(by_name["smoke-array-chunking-rescan-big"],
                 ["tests/smoke_array_chunking.py", "--stage", "rescan-big"], timeout=600)
+
+    # 4) 渲染两项（条件项：仅缓存命中时入 RUN 层；离线、无需 daemon）
+    for renderer in ("qgis", "arcpy"):
+        name = f"smoke-map-renderers-{renderer}"
+        if by_name[name].layer == "run":
+            run_cmd(by_name[name], ["tests/smoke_map_renderers.py", renderer], timeout=900)
+
+    # 5) ruff 门禁（可选 RUN 项；_probe_ruff 已确认离线可用才为 RUN）
+    if by_name["ruff-check"].layer == "run":
+        run_ruff(by_name["ruff-check"])
 
     # 汇总 + 覆盖矩阵
     failed = [c for c in checks if c.layer == "run" and c.status == "fail"]
@@ -453,7 +569,7 @@ def main() -> int:
                 "name": c.name, "module": c.module, "layer": c.layer, "status": c.status,
                 "duration_s": c.duration_s, "log_path": c.log_path,
                 "skip_reason": c.skip_reason, "note": c.note,
-                "fail_summary": c.fail_summary,
+                "fail_summary": c.fail_summary, "probe": c.probe,
             }
             for c in checks
         ],

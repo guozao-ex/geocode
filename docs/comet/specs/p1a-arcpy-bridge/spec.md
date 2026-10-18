@@ -30,3 +30,12 @@ arcpy 路径产出的 layout 包含标题 / 比例尺 / 指北针 / 图例 / 图
 ### Scenario: 指纹与资产保护（验收：A6）
 
 新增 `layout` 字段后，旧 spec（不含 layout）的 `fingerprint()` 保持不变（守卫名单更新 + 回归断言）；`source.py` / `grid.py` 零改动；`PROCESSING_VERSION` 保持 2；`arcgispro-py3` 环境不被安装任何新包（subprocess + 文件交换，红线 7）。
+
+> ⚠️ **c17 补充（2026-10-18）**：`emit_map` 的**失败判定**已收紧为「预期产物缺一即失败」——
+> 在此之前，qgis 分支要 `.qgz` **与** `.png` 同时失败才算失败（局部失败会被判成功），
+> bridge 返回的 `layout_error` 被丢弃，arcpy 导出缺失也不报错。现改为按 `spec` 真实配置推导预期：
+> qgis 需 `.qgz`+`.png`；arcpy 需 `.aprx` + `layout.formats` 所列导出；
+> `layout_error` 非空即失败。**本文件的不变量不变**：renderer 纪律、产物面（qgis=`.qgz`+PNG、
+> arcpy=`.aprx`+PDF+PNG）、nolayout 语义（`layout` 缺席 ⇒ 只出 map-only `.aprx`、无 PDF/PNG 导出）
+> 与本文所有 Scenario、编号、验收均未改动。变更登记见 `docs/comet/specs/README.md`；
+> 验收落在 `verify-all`（c17 的 A20–A22）。
