@@ -431,7 +431,15 @@ def collapse_mask_bands(path: Path, n_value_bands: int, *,
     per_row = max(1, width * count * np.dtype(dtype).itemsize)
     block_rows = max(1, int(target_bytes) // per_row)
 
-    profile.update(count=n, nodata=float("nan"))
+    # c18 附条件 2：整数 value band 提升为 float32 —— 与 normalize_nodata_to_nan 口径统一。
+    # 折叠后要写 NaN（掩膜为 0 处），整数容器装不下 NaN：rasterio 会直接抛
+    # "nodata value, nan, is beyond the valid range of its data type, int32"（c15 实测）。
+    # ⚠ 这是**封住既有缺陷路径**，不是"允许整数容器"：GEE 下载件恒为浮点，
+    #    显式声明整数容器由契约层（gis/container.py）拒绝，两处口径不冲突。
+    out_dtype = dtype
+    if not np.issubdtype(np.dtype(dtype), np.floating):
+        out_dtype = "float32"
+    profile.update(count=n, dtype=out_dtype, nodata=float("nan"))
     tmp = path.with_suffix(path.suffix + ".part")
     try:
         with rasterio.open(tmp, "w", **profile) as dst:
@@ -456,7 +464,7 @@ def collapse_mask_bands(path: Path, n_value_bands: int, *,
         raise
     aux = path.with_name(path.name + ".aux.xml")
     aux.unlink(missing_ok=True)
-    return {"bands": n, "dropped_mask_bands": n, "dtype": dtype}
+    return {"bands": n, "dropped_mask_bands": n, "dtype": dtype, "out_dtype": out_dtype}
 
 
 def write_chunk_array(dst, window: dict[str, int], arr) -> None:

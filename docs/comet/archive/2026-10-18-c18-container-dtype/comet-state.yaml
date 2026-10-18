@@ -1,0 +1,477 @@
+schema: comet.native.v4
+name: c18-container-dtype
+language: zh-CN
+phase: archive
+status: done
+state_version: 14
+brief: brief.md
+document_constraints_version: 3
+shape_confirmation_hash: 24c2f0b2e13df3ffa9f83591d3c1527a68272389f518fbaf0ba598a73ceb50da
+spec_changes:
+  - capability: container-dtype
+    operation: create
+    source: specs/container-dtype/spec.md
+workspace:
+  isolation: worktree
+  change_branch: comet/c18-container-dtype
+  target_branch: main
+  finish: merge
+loop:
+  stage: done
+  goal_cycle: 3
+  iteration: 1
+  attempt: 1
+  retry_epoch: 0
+  failed_iteration_count: 0
+  no_progress_count: 0
+  execution_failure_count: 0
+  previous_unresolved_ids: []
+  next_action: null
+acceptance:
+  - id: A1
+    source: brief.md
+    text: "A1: 同一 spec 的 `emit_file`（GeoTIFF）与 `emit_array`（NetCDF）容器 dtype 一致，且等于按
+      Q1 选定 语义推导出的期望值（例如 `container_dtype=float32` 时两边都是 float32）。"
+    result: passed
+    reason:
+      text: 两出口共用 gis/container.py::resolve_container 单源解析。独立离线实测（自建 spec）：显式 float32
+        → GeoTIFF ds.dtypes=['float32'] 且 NetCDF B4=float32；显式 float64 →
+        ['float64'] 且 float64；缺省不声明 → 两边 float32（且 to_dict 不带该键）。时序堆叠路径离线跑通
+        _merge_stack(container='float32')：输出 ['float32','float32']、nodata=NaN、值
+        0.125/0.5 保持，container=None 时仍为历史 float64。未执行：GeoTIFF 分块拼接（emit.py:793
+        由首个 tile 继承容器，tile 已在 _fetch_tif 落契约）与 NetCDF 分块写入（emit.py:1471
+        np.dtype(container)）为代码审查，需 GEE。
+      truncated: false
+  - id: A2
+    source: brief.md
+    text: 'A2: 量纲守卫生效：对"数据为 0–1 小数、却声明整数容器"的 spec，产物不得被静默量化 ——
+      必须报出可读错误（或按选定语义降级为浮点并明确告警），且有离线用例覆盖该判定。'
+    result: passed
+    reason:
+      text: 自建破坏性输入（不读测试名）：guard_container_capacity([[0.0695,0,1],[0.5,nan,0.25]],'uint16')
+        抛 SpecError，消息含首个越界样值 0.0695、越界像元计数与「改法：float32/float64」；含 NaN + int32
+        亦拒；浮点容器与「整数数据+整数容器」放行（不误伤）。真实写盘路径：spec(dtype=uint16,
+        container_dtype=uint16)（过静态校验）在 _apply_container_to_geotiff 抛
+        SpecError，被测文件 sha 与 mtime 不变、无 .part 残留＝写盘前拦下。monkeypatch
+        绕过契约层（resolve_container→'uint16'）后采样守卫仍拦下同一输入，证明拦阻来自实测采样而非只看声明。静态层另行拒
+        dtype=float32+container=uint16 的自相矛盾声明。
+      truncated: false
+  - id: A3
+    source: brief.md
+    text: 'A3: 既有 P0 样本的像素值不因本 change 变化（数值域校验：min/max/mean 与改动前一致， 容差 ≤ 1e-6）。Shape
+      已确认 Q2=b ⇒ 本 change 不 bump `PROCESSING_VERSION`、不预注册金指纹切换， A3 只按"数值域不变 +
+      金指纹不回退"判。实测必须打在 **S2 真彩色**那条（现状 GeoTIFF float64 → 契约 float32
+      才是真验证）；DEM（现状已 float32）与 WorldCover（同样 float32）只能作旁证，不得单独充数。'
+    result: passed
+    reason:
+      text: 打在现状确为 float64 的 S2 真彩色与 NDVI（主工作区基线只读复制到 .cache，用本 change 的
+        rewrite_geotiff_container 落 float32
+        后逐块全量比对）：taian_s2_truecolor.ff2f0ca1（1769×936×3）max|Δ|=2.975e-08，Δmin=0、Δmax≤1.83e-08、Δmean≤1.27e-11；taian_s2_truecolor_10m.824afc80（17680×9355×3）max|Δ|=5.951e-08、Δmean≤6.02e-11；taian_s2_ndvi.4e5dc772
+        max|Δ|=2.980e-08。旁证（本就
+        float32，changed=False、Δ=0.0）：taian_dem_city.26f57c12 /
+        taian_dem_county.3227ec35。五组 .nc 基线全为 float32＝契约，无归一动作。全部 |Δ| ≤
+        1e-6（实测上界 5.951e-08），非有限像元计数不变。
+      truncated: false
+  - id: A4
+    source: brief.md
+    text: 'A4: 文档收敛：README §9.7 的"已知边界"条目不再声称 dtype 不可控，改为写清当前语义与取值规则； dev doc
+      的对应章节同步。'
+    result: passed
+    reason:
+      text: 入库件 README.md 新增容器契约条目（默认
+        float32、dtype=数据语义提示、两出口按同一契约、容器不进指纹、整数容器被拒、缓存命中归一并留痕）；父提交 README.md
+        本来就没有「容器 dtype 不可控」的表述（git show 2511389:README.md 无
+        dtype/容器字样），需要收敛的「已知边界」原文只在 gitignored 的 docs/README.md §9.7，按 D5 以
+        local-changes.md 清单交付（§9.7 整段改写 + §3.1 字段表加行 + §11 判例注记）。主工作区
+        docs/README.md mtime 仍为 2026-10-11 22:12，未被就地改动。
+      truncated: false
+  - id: A5
+    source: brief.md
+    text: "A5: 回归：离线用例全绿（含容器 dtype 与量纲守卫的新用例）、`uvx ruff@0.17.0 check` 零告警、
+      `tests/verify_all.py` 离线层 RUN 全 PASS。"
+    result: passed
+    reason:
+      text: 独立复跑：python -m unittest discover -s tests/unit -t . → Ran 369 tests, OK
+        (skipped=10)，含容器契约与量纲守卫新用例；uvx --offline ruff@0.17.0 check → All checks
+        passed!；tests/verify_all.py 自跑一轮（先确认 127.0.0.1:6531 空闲）→
+        overall=pass，RUN 4 / PASS 4 / FAIL 0 / SKIP
+        9（跳过项均为需网络/GEE/前置产物，属离线层设计口径），报告 logs/verify_all_report.json。
+      truncated: false
+  - id: A6
+    source: brief.md
+    text: 'A6: 附条件 1 —— 旧产物容器不一致被**显式处置**：缓存命中时既有产物的容器 dtype 与当前契约不符 （如 S2 真彩色 .tif
+      为 float64、契约 float32）会走一次性归一（沿用 `normalize_nodata_to_nan` 的 .part +
+      原子替换先例）并留下可读进度记录；不接受"默认无视"。旧缓存不被删除，也不另造基线。'
+    result: passed
+    reason:
+      text: 走真实出口入口（离线可达）实测：emit_file 缓存命中 float64 的 s2_beijing_test.b91c09c9.tif →
+        产物变 float32，留痕两条「既有产物容器不符契约（band1–3 float64 != 契约 float32）」「既有产物容器归一：容器
+        float64 → float32（按 container_dtype 契约）」，逐像元 max|Δ|=2.975e-08，无
+        .part，返回体指纹仍 b91c09c9c6451c16；再跑一次容器已一致 ⇒ sha/mtime
+        零变化、不再报归一（仅『已存在，跳过下载』）。.nc 侧走真实 emit_array：float64 的 .nc 归一为 float32
+        并留痕（B4/B3 float64→float32），已一致的 float32 基线 .nc 不重写。旧缓存未删除、未改名、未另造基线。
+      truncated: false
+  - id: A7
+    source: brief.md
+    text: "A7: 附条件 3 —— 判例写进文档：`docs/README.md` §11 红线 3 下补注记，写明「容器精度截断
+      （float64→float32 等）若数值域在 1e-6 容差内不变，不视为改变像素输出；nodata/掩膜语义的归一化 改写同理（c15
+      判例）」。该文件是 gitignored 本地件，以**待执行差异清单**形式交付（四列：现状 / 改为 / 依据 /
+      回退），由归档轮在主工作区就地执行。"
+    result: passed
+    reason:
+      text: local-changes.md 三项差异各含现状/改为/依据/回退四列，现状为逐字全文并带执行时行号。独立核对主工作区
+        docs/README.md：§9.7「已知边界」恰为 506–508 行、§3.1 dtype 行为 174、§11 红线 3 为
+        526（其下紧接红线 4，插入位明确），三处引文与磁盘逐字节相同。回退列给出可逆动作（还原整段 / 删新增行 /
+        删插入行），并在执行备忘里给出「先核行号再改」与备份建议。
+      truncated: false
+  - id: A8
+    source: brief.md
+    text: "A8: 回归基线按同步 main 后的口径留档：全量离线用例 ≥ 352 条全绿（不得低于 352）， 并附 change 开始时的实测条数。"
+    result: passed
+    reason:
+      text: 交付口径 369 条全绿（OK, skipped=10）≥ 352。基线口径独立复核：抽取父提交 2511389 完整树在 .cache
+        内跑同一命令 → Ran 352 tests, OK (skipped=10)，与 brief/spec 记载的 352 一致；增量 +17
+        条（test_container_dtype 15 + test_export_chunks 1 + test_spec_fingerprint
+        1），只增不减。
+      truncated: false
+  - id: A9
+    source: brief.md
+    text: "A9: `container_dtype` 序列化按红线 8：仅在值 ≠ 默认 `float32` 时落键；旧 spec（未写该字段）
+      指纹逐字节不变，金指纹 `b91c09c9c6451c16` / `c9243efd40318c85` 不回退。"
+    result: passed
+    reason:
+      text: 候选与父提交的 gis/spec.py 各自独立加载后比对同一 P0 spec（tests/unit/_helpers.py 本 change
+        零改动）：to_dict() 的 JSON 字节在 sort_keys 与插入序两种序列化下都完全一致（sha256 前 16 位
+        9e66a89759a7e150 / 324c199ba165155b 两边相同），container_dtype
+        键缺席；fingerprint() 两边都是 b91c09c9c6451c16＝金值，PV 置 2 时为
+        c9243efd40318c85＝金值，均不回退。显式 container_dtype='float64' 时 to_dict
+        落键、指纹不变、from_dict 往返不丢；fingerprint() 函数体不含
+        container_dtype。EXCLUDED_FIELDS 含 container_dtype 且不在
+        FINGERPRINT_FIELDS，两者并集恰好覆盖 dataclass 全部字段且无交叠。
+      truncated: false
+  - id: A10
+    source: brief.md
+    text: "A10: 附条件 2 —— `collapse_mask_bands`（`gis/export_chunks.py`）补齐整数 value
+      band → float32 提升，与 `normalize_nodata_to_nan` 口径统一：对整数容器 + nodata=NaN
+      的组合不再硬失败， 且有离线用例覆盖该判定（当前实现会抛 rasterio 越界 ValueError）。"
+    result: passed
+    reason:
+      text: 破坏性自证：先复现 c15 失败形态（rasterio 以 dtype=int32 + nodata=nan 建文件 → ValueError
+        'nodata value, nan, is beyond the valid range of its data type,
+        int32'）；再对 int32 两波段（值+掩膜）跑 collapse_mask_bands(path,1) → 返回 dtype=int32
+        / out_dtype=float32，落盘 ['float32']、nodata=NaN，掩膜=0 处为 NaN、值 3.0/1.0 保留，无
+        .part 残留；浮点输入行为不变（仍 float32，值 0.5 与 NaN 正确）。
+      truncated: false
+builder_handoff:
+  candidate_id: e1922559-3250-45a0-96cc-0fd35ce0a006
+  identity_provider: skill-coordinated
+  builder_execution_ref: skill-coordinated:builder:f30a9e23-7089-40d0-8464-6a567cd905ff
+  iteration: 1
+  summary:
+    text: c18 容器 dtype 契约：新增 ArtifactSpec.container_dtype（默认 float32；不进指纹、不 bump
+      PROCESSING_VERSION），GeoTIFF（直写/分块/时序堆叠）与 NetCDF（直接/分块）按同一契约落容器；新增
+      gis/container.py 承载契约解析 + 量纲守卫（整数容器一律拒绝、写盘前有界采样自证）+ 容器归一；补齐
+      collapse_mask_bands 的整数 value band → float32 提升（c15
+      遗留缺口）；缓存命中时旧容器就地归一并留痕（附条件 1）；文档收敛（README 入库件 + docs/README.md 待执行差异清单）。
+      候选提交：3ab6d39（worktree comet/c18-container-dtype，基线 2511389）。
+    truncated: false
+  addressed_acceptance_ids:
+    - A1
+    - A2
+    - A3
+    - A4
+    - A5
+    - A6
+    - A7
+    - A8
+    - A9
+    - A10
+  acceptance_review:
+    - id: A1
+      status: implemented-with-evidence
+      evidence:
+        - gis/emit.py::_apply_container_to_geotiff（GeoTIFF 直写/时序堆叠落容器）与
+          _write_ncdf_with_container / _compute_array_chunked_to_ncdf（NetCDF
+          直接/分块）都经 gis/container.py::resolve_container 取契约；离线断言
+          tests/unit/test_container_dtype.py::ProductContainerTest::test_rewrite_geotiff_container_floats
+          与 ::test_ncdf_written_with_contract_container（assert_product_container
+          == []）；logs/c18_a6_cache_normalization.json 记录 emit_file 与 emit_array
+          两侧产物容器均为 float32。
+      note: 容器由单一函数解析，两出口不存在各自推导。
+    - id: A2
+      status: implemented-with-evidence
+      evidence:
+        - gis/spec.py::ArtifactSpec.validate 的容器段（非法取值 / 自相矛盾声明 / nodata=NaN）+
+          gis/container.py::resolve_container（整数容器一律拒绝）+
+          guard_container_capacity（写盘前有界采样）。破坏性自证
+          tests/unit/test_container_dtype.py::DimensionGuardTest::test_fractional_data_rejected_for_integer_container：输入含
+          0.0695 的浮点数据 + uint16 容器，断言被拦下且报错含 0.0695 与「静默数据损坏」；负例
+          test_fractional_data_passes_float_containers 证明浮点容器放行。
+      note: 守卫用实测证据而非声明比较；装不下即拒绝，不留被静默量化的产物。
+    - id: A3
+      status: implemented-with-evidence
+      evidence:
+        - logs/c18_a3_container_effective_values.json（5 组、逐波段分块读比对）。S2 真彩色
+          taian_s2_truecolor.ff2f0ca1（基线 float64×3）容器改 float32 后
+          max|diff|=2.975e-08，逐波段 mean 逐位相同（0.0498751992 / 0.0503959153 /
+          0.0379256872）；taian_s2_truecolor_10m.824afc80（float64，17680×9355）max|diff|=5.951e-08；taian_s2_ndvi.4e5dc772（float64）max|diff|=2.980e-08；DEM
+          两组基线本就 float32，max|diff|=0.0（旁证）。全部 ≤ 1e-6。
+      note: 真验证打在现状 float64 的 S2 真彩色/NDVI；比对在 worktree 本地副本上做，主工作区基线只读；金指纹
+        b91c09c9c6451c16 未回退。
+    - id: A4
+      status: implemented-with-evidence
+      evidence:
+        - README.md（入库件）核心设计新增容器契约条目、状态更新 c15–c18 口径（git diff main --
+          README.md，+8/-2）；docs/README.md 是 gitignored 本地件，按 D5 交付
+          docs/comet/changes/c18-container-dtype/local-changes.md（§9.7 整段改写 +
+          §3.1 字段表加行，四列含逐字现状）。
+      note: 本地件不就地改主工作区（worktree 隔离）；清单由归档轮执行，逐条可逆。
+    - id: A5
+      status: implemented-with-evidence
+      evidence:
+        - 离线全量 369 用例 OK（10 skipped）；uvx --offline ruff@0.17.0 check 输出 All
+          checks passed!；tests/verify_all.py 一轮 RUN 4 / PASS 4 / FAIL
+          0（tests-unit、tui-timeseries-probe、daemon-endpoint-probe、ruff-check），SKIP
+          9 项均因网络或前置产物缺失，报告 logs/verify_all_report.json。
+      note: 在线依赖项按设计 SKIP（离线层口径）；在线补跑由 Verifier 独立判断。
+    - id: A6
+      status: implemented-with-evidence
+      evidence:
+        - gis/emit.py::_cast_product_container（缓存命中先 assert_product_container
+          判偏差，再就地归一）。实测 logs/c18_a6_cache_normalization.json：把既有
+          s2_beijing_test.b91c09c9.tif（float64×3）复制进 worktree 本地 data root 后跑
+          emit_file，0.3s 命中缓存，产物容器 float64 → float32、nodata 保持 NaN、指纹仍
+          b91c09c9c6451c16；进度留痕两条（既有产物容器不符契约 | band1 float64 != 契约
+          float32…；既有产物容器归一 | 容器 float64 → float32（按 container_dtype
+          契约））。容器已一致时短路不重写（test_rewrite_is_noop_when_container_matches 断言 mtime
+          不变）。
+      note: 既有缓存不删、不重生成；归一在副本上验证，主工作区基线只读。
+    - id: A7
+      status: implemented-with-evidence
+      evidence:
+        - docs/comet/changes/c18-container-dtype/local-changes.md 第 3 条（§11 红线 3
+          判例注记）：四列齐全、现状为逐字全文 + 执行时行号（526），插入文本逐字给出（容器精度截断在 1e-6
+          容差内不视为改变像素输出；nodata/掩膜语义归一化改写同理，c15 判例）。
+      note: 本 worktree 不改 docs/README.md（该文件不在 worktree 内）；归档轮执行。
+    - id: A8
+      status: implemented-with-evidence
+      evidence:
+        - change 开始基线（同步 main 后）352 用例 OK（skip 10）；交付基线 369 用例 OK（skip 10，新增 17
+          条：test_container_dtype 15 + collapse 提升 1 + 容器指纹回归 1）。条数取自 python -m
+          unittest discover -s tests/unit -t . 的汇总行。
+      note: 只增不减；回归口径按 352 留档（不是立项时的 257）。
+    - id: A9
+      status: implemented-with-evidence
+      evidence:
+        - gis/spec.py：to_dict 仅在 container_dtype != DEFAULT_CONTAINER_DTYPE
+          时写键；fingerprint() payload 不含该键；from_dict 缺省回落 float32。断言
+          tests/unit/test_container_dtype.py::ContainerContractTest::test_serialization_omits_default_container
+          与
+          tests/unit/test_spec_fingerprint.py::FingerprintForwardCompatGuardTest::test_container_dtype_excluded_from_fingerprint。实测
+          make_p0_spec().fingerprint() == b91c09c9c6451c16，且声明
+          container_dtype=float64 后指纹不变。
+      note: 红线 8 结构守卫的 EXCLUDED_FIELDS 已登记 container_dtype（附理由注释），未绕过守卫。
+    - id: A10
+      status: implemented-with-evidence
+      evidence:
+        - gis/export_chunks.py::collapse_mask_bands 新增 out_dtype 提升（非浮点容器 →
+          float32）并同步 profile 的 dtype / nodata，返回值新增 out_dtype。破坏性自证
+          tests/unit/test_export_chunks.py::TestMaskCollapse::test_collapse_promotes_integer_value_band：int32
+          值带 + int32 掩膜带折叠后容器 float32、掩膜 0 处为 NaN、nodata 为 NaN、无 .part 残留（旧行为下
+          rasterio 抛 nodata nan 越界）。
+      note: 与 normalize_nodata_to_nan 口径统一；该函数本身零改动（C15 已验收语义）。
+  checks:
+    - name:
+        text: unit
+        truncated: false
+      result: passed
+      note:
+        text: python -m unittest discover -s tests/unit -t . 369 tests OK (skipped=10)
+        truncated: false
+    - name:
+        text: ruff
+        truncated: false
+      result: passed
+      note:
+        text: uvx --offline ruff@0.17.0 check All checks passed!
+        truncated: false
+    - name:
+        text: verify_all
+        truncated: false
+      result: passed
+      note:
+        text: python tests/verify_all.py RUN 4 / PASS 4 / FAIL 0，SKIP 9（离线层）
+        truncated: false
+    - name:
+        text: a3-effective-values
+        truncated: false
+      result: passed
+      note:
+        text: python .cache/c18_a3_evidence.py 5 组 max|diff| ≤ 5.951e-08 ≤ 1e-6，报告
+          logs/c18_a3_container_effective_values.json
+        truncated: false
+  checks_truncated: false
+  known_limits:
+    - text: A3/A6 的实测在 worktree 本地副本上做（主工作区 data/derived 只读复用）；主工作区基线未被本 change 改动。
+      truncated: false
+    - text: A3 是逐块全量读比对（非逐像素 sha256）；复现脚本 .cache/c18_a3_evidence.py 按项目纪律不入库。
+      truncated: false
+    - text: NetCDF 容器归一（_rewrite_ncdf_container）走 dask 流式写，本机未用 1.98 GB 级的
+        taian_s2_truecolor_10m.824afc80.nc 实测（只验证了小块 .nc）。
+      truncated: false
+    - text: collapse_mask_bands 的整数提升用合成 int32 输入自证；该形态在真实 GEE
+        下载件上当前不可达（source.build_image 恒 toFloat，c15 已记录）。
+      truncated: false
+  known_limits_truncated: false
+  review: null
+  submitted_at: 2026-10-18T07:26:52.969Z
+blockers: []
+verification:
+  candidate_id: e1922559-3250-45a0-96cc-0fd35ce0a006
+  identity_provider: skill-coordinated
+  verifier_execution_ref: skill-coordinated:verifier:1ac00af1-ead8-46e6-ae73-08f1a2ecff55
+  iteration: 1
+  attempt: 1
+  assurance: skill-coordinated
+  verdict: pass
+  checks:
+    - id: c18-unit-suite
+      name:
+        text: 离线单测全量（含容器契约与量纲守卫用例）
+        truncated: false
+      argv_display:
+        - text: -m
+          truncated: false
+        - text: unittest
+          truncated: false
+        - text: discover
+          truncated: false
+        - text: -s
+          truncated: false
+        - text: tests/unit
+          truncated: false
+        - text: -t
+          truncated: false
+        - text: .
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 20511
+    - id: c18-ruff
+      name:
+        text: ruff 门禁（零告警）
+        truncated: false
+      argv_display:
+        - text: --offline
+          truncated: false
+        - text: ruff@0.17.0
+          truncated: false
+        - text: check
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 189
+    - id: c18-verify-all
+      name:
+        text: verify_all 离线层（RUN 项全 PASS；需端口 6531 空闲）
+        truncated: false
+      argv_display:
+        - text: tests/verify_all.py
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 27922
+  summary:
+    text: 独立复核（fresh 上下文，未改任何被跟踪文件）：A1–A10 全部 passed，verdict=pass。核心数字：候选提交 3ab6d39
+      上 369 用例全绿（父提交 2511389 实测 352，同日同步 main 口径一致）、ruff 零告警、verify_all RUN 4/4
+      PASS；S2 真彩色/NDVI/10m 真彩色三组现状 float64 样本落 float32 后逐块全量比对 max|Δ| 分别为
+      2.975e-08 / 2.980e-08 / 5.951e-08（≤1e-6，DEM 两组 changed=False、Δ=0）；旧 spec 的
+      to_dict 与 fingerprint 相对父提交逐字节不变（b91c09c9c6451c16 / c9243efd40318c85
+      双双复算命中）；量纲守卫在写盘前以可读 SpecError 拦下「0–1 小数 + 整数容器」，绕过契约层后守卫仍生效；缓存命中经真实
+      emit_file/emit_array 入口归一 float64→float32
+      并留痕，容器一致时零字节重写。PROCESSING_VERSION 仍为 3、normalize_nodata_to_nan
+      等既存函数体相对父提交逐字节未变、docs/README.md 未在主工作区就地改动。残留风险均为未离线可达路径与工作树卫生类，见 risks。
+    truncated: false
+  risks:
+    - text: 5 条写盘路径中 3 条未离线执行（GeoTIFF 分块拼接、NetCDF 分块写入、GEE 下载本身），仅代码审查：前两条分别依赖 tile 已在
+        _fetch_tif 落契约（emit.py:793 继承首个 tile 的 dtype）与
+        np.dtype(container)（emit.py:1471），逻辑上收敛于同一契约，但没有运行证据。
+      truncated: false
+    - text: NetCDF 容器归一（_rewrite_ncdf_container）只在合成小块 .nc 上实测；1.98 GB 级的
+        taian_s2_truecolor_10m.824afc80.nc 未做归一跑（Builder 的 known_limits 亦有同样声明）。
+      truncated: false
+    - text: .cache/ 未被 .gitignore（只忽略 daemon.json/jobs.json 等固定三项），工作树里留有约 40
+        个未跟踪的过程脚本与 JSON（c18_*.py / c18_*.json / a3、a6 数据副本）；候选提交 3ab6d39
+        的树内干净（13 文件全为正式产物），不含这些文件 —— 但归档若按「工作树必须干净」判定需注意。
+      truncated: false
+    - text: Builder handoff 的 A3 note 写「逐波段 mean 逐位相同」与实测不符：实测 Δmean 最大 1.27e-11（其自己的
+        logs/c18_a3_container_effective_values.json 也记了 mean_baseline ≠
+        mean_contract）；验收判据是 |Δ| ≤ 1e-6，不影响结论，仅措辞过强。
+      truncated: false
+    - text: 主工作区 s2_beijing_test.b91c09c9.tif/.nc 的 mtime 是 2026-10-18
+        14:41/14:54（早于本候选提交 15:25，贴近 main 合流 14:37 与 c17 归档 14:47）；其容器仍为
+        float64＝c18 记录的「改前」状态，taian 五组与 docs/README.md 保持 10-11 未动 —— 无法归因到 c18
+        Builder，但主工作区 P0 两件确实在今日被动过。
+      truncated: false
+    - text: _merge_stack 的整数容器场景由 rasterio.open 的 ValueError
+        先失败（仍在写盘前，无产物落地），公开路径上可读报错来自
+        resolve_container；即该函数内的采样守卫对整数容器不可达（防御性），不构成 A2 失败。
+      truncated: false
+  risks_truncated: false
+  completed_at: 2026-10-18T07:41:17.898Z
+history:
+  - goal_cycle: 1
+    iteration: 0
+    attempt: 0
+    outcome: recovery
+    unresolved_ids: []
+    summary:
+      text: Native confirmed acceptance criteria changed
+      truncated: false
+    completed_at: 2026-10-18T07:00:33.649Z
+  - goal_cycle: 2
+    iteration: 1
+    attempt: 0
+    outcome: recovery
+    unresolved_ids: []
+    summary:
+      text: Native confirmed acceptance criteria changed
+      truncated: false
+    completed_at: 2026-10-18T07:26:10.903Z
+  - goal_cycle: 3
+    iteration: 1
+    attempt: 1
+    outcome: pass
+    unresolved_ids: []
+    summary:
+      text: 独立复核（fresh 上下文，未改任何被跟踪文件）：A1–A10 全部 passed，verdict=pass。核心数字：候选提交 3ab6d39
+        上 369 用例全绿（父提交 2511389 实测 352，同日同步 main 口径一致）、ruff 零告警、verify_all RUN
+        4/4 PASS；S2 真彩色/NDVI/10m 真彩色三组现状 float64 样本落 float32 后逐块全量比对 max|Δ| 分别为
+        2.975e-08 / 2.980e-08 / 5.951e-08（≤1e-6，DEM 两组 changed=False、Δ=0）；旧 spec
+        的 to_dict 与 fingerprint 相对父提交逐字节不变（b91c09c9c6451c16 / c9243efd40318c85
+        双双复算命中）；量纲守卫在写盘前以可读 SpecError 拦下「0–1 小数 + 整数容器」，绕过契约层后守卫仍生效；缓存命中经真实
+        emit_file/emit_array 入口归一 float64→float32
+        并留痕，容器一致时零字节重写。PROCESSING_VERSION 仍为 3、normalize_nodata_to_nan
+        等既存函数体相对父提交逐字节未变、docs/README.md 未在主工作区就地改动。残留风险均为未离线可达路径与工作树卫生类，见 risks。
+      truncated: false
+    completed_at: 2026-10-18T07:41:17.898Z
+history_overflow:
+  dropped_entries: 0
+  first_dropped_at: null
+  last_dropped_at: null
+  outcome_counts:
+    pass: 0
+    fail: 0
+    blocked: 0
+    execution-error: 0
+    recovery: 0
+verification_result: pass
+verification_report: verification.md
+archived: true
+created_at: 2026-10-11T13:02:54.544Z

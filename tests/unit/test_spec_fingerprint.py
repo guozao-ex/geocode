@@ -33,12 +33,20 @@ from gis.spec import (
 # 缺省时在 fingerprint() payload 中整个键缺席 → 旧 spec 指纹不变（金指纹锚定）。
 # overlays（2026-10-07，C8）：矢量叠加呈现层，与 layout 同类，排除 —— 缺席与在场
 # 指纹逐位相同（D3 预裁决；金指纹 b91c09c9c6451c16 不回退）。
+# container_dtype（2026-10-18，c18）：落盘容器契约。改容器只改**表示精度**，
+# 不改物理像素值/数值域（判据：1e-6 容差内 min/max/mean 不变）；与 render/layout
+# 同类排除 —— 缺省 float32 时 to_dict 也整个键缺席，旧 spec 指纹与序列化逐字节不变。
+# 若未来把它移入白名单（即认定容器改变像素输出），必须按红线 3 bump PROCESSING_VERSION
+# 并预注册金指纹切换 —— 那会与并行推进的 change 的"金指纹不得回退"断言撞车，先停下问。
 FINGERPRINT_FIELDS = {
     "asset", "band_expr", "crs", "scale", "aoi",
     "dtype", "bands", "time_range", "reducer",
     "time_step", "time_ranges",
 }
-EXCLUDED_FIELDS = {"id", "note", "tags", "render", "nodata", "layout", "overlays"}
+EXCLUDED_FIELDS = {
+    "id", "note", "tags", "render", "nodata", "layout", "overlays",
+    "container_dtype",
+}
 
 # P0 样本 spec 的指纹金值表（GOLDEN_FINGERPRINTS）已移到 tests/unit/_helpers.py ——
 # **单一事实源**：单测、smoke 脚本（smoke_array_chunking）与文档注释都从那里取值。
@@ -165,6 +173,23 @@ class FingerprintForwardCompatGuardTest(unittest.TestCase):
             f"EXCLUDED_FIELDS（当前 {sorted(EXCLUDED_FIELDS)}）。"
             "移动后确认旧 spec 指纹不变（在本文件补一条回归断言）。",
         )
+
+    def test_container_dtype_excluded_from_fingerprint(self):
+        """c18 红线 8 回归：container_dtype 不进指纹，且缺省时序列化整键缺席。
+
+        容器判定为"不影响像素值"（与 render/layout 同类）⇒ 不 bump PROCESSING_VERSION；
+        因此旧 spec 的 fingerprint 与 to_dict 必须逐字节不变（金指纹锚定）。
+        """
+        base = make_p0_spec()
+        self.assertEqual(base.container_dtype, "float32")          # 契约默认值
+        self.assertNotIn("container_dtype", base.to_dict())        # 缺省即缺席
+        self.assertEqual(
+            base.with_(container_dtype="float64").fingerprint(), base.fingerprint()
+        )
+        # 显式声明非默认值时才落键（仍不进指纹）
+        declared = base.with_(container_dtype="float64").to_dict()
+        self.assertEqual(declared["container_dtype"], "float64")
+        self.assertNotIn("container_dtype", base.fingerprint.__self__.fingerprint())
 
     def test_rosters_consistent_with_dataclass(self):
         fields = {f.name for f in dataclasses.fields(ArtifactSpec)}

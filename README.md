@@ -21,13 +21,19 @@ Layer 4  服务层         HTTP daemon（/mcp + /rpc + /events）+ TUI
 
 - `ArtifactSpec`：frozen dataclass，CRS / 分辨率 / AOI(GeoJSON) / 波段 / 时间 / 渲染全部显式声明；
   指纹（spec 字段 + 处理逻辑版本）进产物文件名，缓存命中可解释、可作废。
+- 产物**容器 dtype** 是显式契约（`container_dtype`，默认 `float32`）：`emit_file`（GeoTIFF）与
+  `emit_array`（NetCDF）按同一契约落容器，`spec.dtype` 只是数据语义提示。
+  容器不进指纹（只改表示精度、不改物理像素值）⇒ 不 bump `PROCESSING_VERSION`；
+  整数容器被拒（产物无数据语义统一为 `NaN`，整数容器装不下），缓存命中时旧容器就地归一并留痕。
 - 网格由 `compute_grid()` 独家裁定，三出口逐像素对齐可校验
   （`ALIGN_TOLERANCE = 0.5` 量化 GEE GEO_TIFF 强制 Int32 的已知差异）。
 - 「人看」不依赖 MCP：`.qgz` 为程序化生成的工程文件，双击即看。
 
 ## 状态
 
-P0 完成并实测验收，路线图 C1–C14 全部交付并归档，C15（`export-chunking`：文件出口分块下载 + nodata/输出根/缓存清理）已实现待独立验收：
+P0 完成并实测验收，路线图 C1–C14 全部交付并归档；c15（`export-chunking`：文件出口分块下载 + nodata/输出根/缓存清理）、
+c16（`verification-coverage`：DEM/GSW 在线覆盖）、c17（`verify-all-evidence-aware`：条件项按盘上事实升降层）已并入 `main`；
+c18（`container-dtype`：产物容器契约）实现中。`export-chunking` 的实测结论：
 三出口产物逐像素一致（容差 0.5），QGIS 4.2.2 与 ArcGIS Pro 3.7 双渲染器读回验证通过；
 当代金指纹 `b91c09c9c6451c16`（PROCESSING_VERSION 3，PV bump 与金值登记见开发文档 §9.1）；
 离线层与在线依赖层均已实测（在线层 2026-10-11 联网补跑全部通过）。

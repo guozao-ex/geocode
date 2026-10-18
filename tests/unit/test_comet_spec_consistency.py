@@ -16,6 +16,7 @@
 """
 
 import os
+import re
 import pathlib
 import unittest
 
@@ -107,30 +108,56 @@ class PublishedArchivePairTest(unittest.TestCase):
         self.assertFalse(orphans, f"归档面存在发布面缺失的 capability：{orphans}")
 
 
+# 验收引用的承载形态（c18 起两种都接受，语义等价）：
+#   1. 标题内 `### Scenario: <标题>（验收：A<n>）` —— C13 发布面规范 2 的历史形态；
+#   2. Scenario 正文独占一行 `Acceptance: A<n>` / `（验：A<n>` —— Comet Runtime 的引用契约
+#      （native-acceptance.js 只在**正文行**上匹配 Acceptance / （验，据此把场景挂到 brief 的验收 ID，
+#       不再另发一条重复验收项）。spec 的 Scenario 编号与 brief 验收 ID **互不重叠**（c18：brief A1–A10 / spec A11–A20）。
+REF_RE = re.compile(r"^(?:Acceptance|验收)\s*[:：]\s*A[1-9]\d*$", re.IGNORECASE | re.UNICODE)
+HEAD_REF = "（验收：A"
+
+
+def _is_scenario_head(line: str) -> bool:
+    return line.startswith("### Scenario: ")
+
+
+def _scenario_reference(lines: list[str], head_index: int) -> str | None:
+    """该 Scenario 的验收引用文本；标题内与正文独占行两种形态都算。"""
+    head = lines[head_index]
+    if HEAD_REF in head:
+        return head[head.index(HEAD_REF):]
+    for ln in lines[head_index + 1:]:
+        if _is_scenario_head(ln) or ln.lstrip().startswith("#"):
+            break
+        if REF_RE.match(ln.strip()):
+            return ln.strip()
+    return None
+
+
 class ScenarioAcceptanceReferenceTest(unittest.TestCase):
-    """不变量 3：每个 Scenario 必带验收引用，且不存在标题外的独立引用行。"""
+    """不变量 3：每个 Scenario 必带验收引用；承载形态见本类上方注释。"""
 
     def test_every_scenario_carries_acceptance_reference(self):
         missing = {}
         for cap, path in _published_specs().items():
             lines = _read(path).split("\n")
-            heads = [l for l in lines if l.startswith("### Scenario: ")]
-            bad = [l for l in heads if "（验收：" not in l]
+            heads = [i for i, l in enumerate(lines) if _is_scenario_head(l)]
+            bad = [lines[i] for i in heads if _scenario_reference(lines, i) is None]
             if bad:
                 missing[cap] = len(bad)
             if not heads:
                 missing[cap] = "无 Scenario"
-        self.assertFalse(missing, f"缺 `（验收：…）` 引用的 spec：{missing}")
+        self.assertFalse(missing, f"缺验收引用的 spec：{missing}")
 
-    def test_no_standalone_acceptance_reference_line(self):
-        """引用必须写在标题内：单独的 `（验收：…）` 行属历史异类形态（C13 已统一）。"""
+    def test_no_legacy_bare_reference_line(self):
+        """历史异类形态（C13 已统一）不得复活：正文独占一行的 `（验收：…）` 属旧形态。"""
         offenders = []
         for cap, path in _published_specs().items():
             for ln in _read(path).split("\n"):
                 if ln.startswith("（验收："):
                     offenders.append(cap)
                     break
-        self.assertFalse(offenders, f"存在标题外独立验收引用行：{offenders}")
+        self.assertFalse(offenders, f"存在历史形态的独立验收引用行：{offenders}")
 
 
 class ArchiveCompletenessTest(unittest.TestCase):
