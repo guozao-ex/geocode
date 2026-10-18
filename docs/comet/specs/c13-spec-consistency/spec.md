@@ -57,6 +57,16 @@
 3. 每个 `### Scenario:` 标题都带 `（验收：A…）` 引用；
 4. 每个归档 change 目录含 `brief.md`、`comet-state.yaml`、`verification.md`、`specs/*/spec.md`。
 该守卫在本次修订**之后**必须全绿；对任一不变量的破坏（例如改名 H1、删副本、去引用）必须使它失败。
+> ⚠️ **c20 修订（不变量 4 的豁免）**：原句要求**每个**归档 change 目录都含 `specs/*/spec.md`，
+> 未考虑 Comet Runtime 的「**不改变产品行为**」豁免 —— change 的 `brief.md` 写一行合规声明即可
+> 免写目标 Spec，此类 change 归档后其归档目录**本来就没有** `specs/`，原判据会让本守卫长期转红
+> （c19-verify-report-drift 归档后 main 全量单测 393 例 1 失败即此）。现判定改为：归档目录必须含
+> `brief.md`/`comet-state.yaml`/`verification.md`；`specs/*/spec.md` 缺失时，**仅当** `brief.md` 的
+> 可见行（排除标题行与围栏内代码）含合规豁免声明 —— 形如 `不改变产品行为` / `不涉及产品行为` /
+> `仅文档` / `no product behavior change` / `documentation-only` 后紧跟 `：` 或 `:`，且理由非占位
+> （空、`<…>`、`{{…}}`、TODO/待填写一类）—— 才放行。判据与 Runtime 的 `hasExplicitSpecExemption` /
+> `isPlaceholderExemptionReason` 同源。原句保留不删；实现见 `tests/unit/test_comet_spec_consistency.py`
+> 的 `archive_completeness_problems` / `spec_exemption_reason`。
 
 ### Scenario: 条款级 supersession 索引（G2）（验收：A22）
 
