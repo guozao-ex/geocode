@@ -291,6 +291,15 @@ class OverlaySpec:
 
 DTYPES = ("uint8", "int16", "uint16", "int32", "float32", "float64")
 
+# c18 容器契约：落盘容器缺省值 = 与 NetCDF/xee 侧既有落盘一致（历史行为）。
+# 不进指纹（与 render / layout / overlays 同类）：改容器只改表示精度，不改物理像素值。
+DEFAULT_CONTAINER_DTYPE = "float32"
+
+# 整数容器：与 nodata=NaN 语义互斥（rasterio 会抛 "nodata value, nan, is beyond the
+# valid range of its data type"）。c18 起显式声明整数容器一律拒绝 —— 完整整数容器
+# 支持（含整数 nodata 哨兵与无量纲数据）是独立 change，不在本 capability 范围。
+INTEGER_CONTAINER_DTYPES = ("uint8", "int16", "uint16", "int32")
+
 REDUCERS = ("median", "mean", "min", "max", "mosaic", "first", "mode", "sum")
 
 # ---------------------------------------------------------------------------
@@ -416,7 +425,15 @@ class ArtifactSpec:
     aoi: dict | None = None                  # GeoJSON geometry dict
 
     # --- 数据 ---
+    # dtype = **数据语义提示**（当前不影响落盘）：描述这份数据在物理/统计意义上的量纲，
+    #   例如 S2 地表反射率声明 uint16（官方缩放口径），但实际计算值是 0–1 浮点。
+    #   它进指纹（见 fingerprint()），改动即换缓存键。
     dtype: str = "float32"
+    # container_dtype = **落盘容器契约**：产物在磁盘上的容器类型（c18）。
+    #   缺省 float32 = 与 NetCDF/xee 侧既有落盘一致（历史行为）⇒ 不进指纹、
+    #   不 bump PROCESSING_VERSION（改容器只改表示精度，不改物理像素值/数值域）。
+    #   ⚠ 与 dtype 的语义分工：dtype 说"这是什么数据"，container_dtype 说"以什么容器落盘"。
+    container_dtype: str = "float32"
     nodata: float | int | None = None
     bands: tuple[str, ...] = ()
 
@@ -452,6 +469,26 @@ class ArtifactSpec:
 
         if self.dtype not in DTYPES:
             raise SpecError(f"dtype={self.dtype!r} 不支持。可选：{', '.join(DTYPES)}")
+
+        if self.container_dtype not in DTYPES:
+            raise SpecError(
+                f"container_dtype={self.container_dtype!r} 不支持。可选：{', '.join(DTYPES)}。\n"
+                "  它是**落盘容器契约**（c18）：默认 float32，只在确实需要另一种容器时才声明。"
+            )
+        # 声明层的一致性（自相矛盾尽早拦）：dtype 说浮点、容器要整数 ⇒ 大概率是误用
+        _int_containers = ("uint8", "int16", "uint16", "int32")
+        if self.container_dtype in _int_containers and self.dtype.startswith("float"):
+            raise SpecError(
+                f"container_dtype={self.container_dtype!r} 与 dtype={self.dtype!r} 自相矛盾：\n"
+                f"  声明的是浮点数据，却要求整数容器 —— GEE 侧 0–1 反射率这类值会被量化成 0"
+                f"（静默数据损坏）。\n"
+                f"  改法二选一：container_dtype 改成 'float32'/'float64'；或把 dtype 收敛为整数量纲。"
+            )
+        if self.nodata is not None and isinstance(self.nodata, float) and self.nodata != self.nodata:
+            raise SpecError(
+                "nodata 不接受 NaN —— GeoTIFF/NetCDF 的无数据语义由出口层统一写成 NaN"
+                "（C15 的 nodata 归一），spec.nodata 只用于声明非 NaN 的哨兵值。"
+            )
 
         if self.scale is not None and self.scale <= 0:
             raise SpecError(f"scale 必须是正数（米），收到 {self.scale}。")
@@ -597,6 +634,8 @@ class ArtifactSpec:
             "scale": self.scale,
             "aoi": self.aoi,
             "dtype": self.dtype,
+            # c18 红线 8：container_dtype 只在**非默认**时落键 ——
+            # 未声明的旧 spec 的 to_dict 输出逐字节不变（金指纹锚定）。
             "nodata": self.nodata,
             "bands": list(self.bands),
             "time_range": list(self.time_range) if self.time_range else None,
@@ -607,6 +646,9 @@ class ArtifactSpec:
             "layout": self.layout.to_dict() if self.layout else None,
             "overlays": [o.to_dict() for o in self.overlays] if self.overlays else None,
         }
+        if self.container_dtype != DEFAULT_CONTAINER_DTYPE:
+            # 红线 8 的"缺省即缺席"：只有显式声明了非默认容器才落键。
+            d["container_dtype"] = str(self.container_dtype)
         if include_meta:
             d["note"] = self.note
             d["tags"] = list(self.tags)
@@ -625,6 +667,7 @@ class ArtifactSpec:
             scale=d.get("scale"),
             aoi=d.get("aoi"),
             dtype=d.get("dtype", "float32"),
+            container_dtype=d.get("container_dtype") or DEFAULT_CONTAINER_DTYPE,
             nodata=d.get("nodata"),
             bands=tuple(d.get("bands") or ()),
             time_range=tuple(tr) if tr else None,

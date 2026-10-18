@@ -24,6 +24,7 @@ import urllib.request
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from . import container as _container
 from . import export_chunks as _chunks
 from . import geoenv
 from . import qgis_bridge as _qb
@@ -71,6 +72,10 @@ LOCAL_IO_DELAYS = (0.5, 2.0)
 # 波段参数哨兵：单期路径沿用 spec.bands；时序堆叠路径显式传 None
 # （toBands() 后波段名是 期前缀_波段，再传 spec.bands 会 band-not-found）
 _SPEC_BANDS = object()
+
+# 容器契约的量纲自证采样窗口（c18）：只读左上角这么多行 —— 1200 万像素 × 3 波段的
+# 真彩色产物也不会因为守卫整份入内存（守卫看的是"目标容器装不装得下"，不是全量统计）。
+CONTAINER_GUARD_ROWS = 64
 
 # map 出口的渲染引擎
 RENDERERS = ("qgis", "arcpy")
@@ -225,18 +230,113 @@ def dispatch(job: Job) -> dict:
 # 公共：准备栅格文件
 # ---------------------------------------------------------------------------
 
-def _normalize_nodata(job: Job, path: Path, *, cache_hit: bool = False) -> dict | None:
+def _cast_product_container(job: Job, path: Path, spec: ArtifactSpec, *,
+                            cache_hit: bool) -> dict | None:
     """
-    nodata 归一 → NaN（C15 A4），带**本地瞬时错误重试**。
+    产物容器归一（c18 容器契约）：把既有产物的容器改成 `spec.container_dtype`。
+
+    - GeoTIFF：就地重写容器（同目录 `.part` + 原子替换）；
+    - NetCDF：只读改写（xarray → 临时件 → 原子替换），与 GeoTIFF 同款留痕；
+      改写按**有界块**流式写（dask chunked），不为归一引入整份驻留。
+
+    与 C15 的 nodata 归一同一哲学：**缓存命中时就地归一 + 留痕**，不删缓存、不重生成。
+    `cache_hit=False`（下载路径）不该走到这里（新写的产物本就按契约落容器），
+    真遇到不一致时抛出 —— 不能静默交付与契约不符的产物。
+    """
+    problems = _container.assert_product_container(path, spec)
+    if not problems:
+        return None
+    want = _container.resolve_container(spec)
+    job.progress("既有产物容器不符契约", None, "；".join(problems[:3]))
+    assert job.spec is not None
+    try:
+        if path.suffix.lower() == ".nc":
+            info = _rewrite_ncdf_container(path, want)
+        else:
+            info = _container.rewrite_geotiff_container(path, want)
+    except Exception as e:                       # noqa: BLE001 — 归一失败不该挡住复用
+        if cache_hit:
+            # 1 GB 级的既有产物上，归一可能因为磁盘空间/权限失败 —— 复用不该因此被挡住，
+            # 但必须留痕（进度 + 警告），不能静默交付与契约不符的产物。
+            job.progress("既有产物容器归一失败", None,
+                         f"{path.name}: {type(e).__name__}: {str(e)[:120]}")
+            import warnings
+
+            warnings.warn(
+                f"既有产物容器归一失败（复用继续，容器仍为 {problems[0]}）："
+                f"{path.name}: {type(e).__name__}: {str(e)[:160]}",
+                RuntimeWarning, stacklevel=2,
+            )
+            return None
+        raise
+    return info
+
+
+def _rewrite_ncdf_container(path: Path, container: str) -> dict:
+    """把 NetCDF 的数据变量容器改成 `container`（streaming 逐变量 copy + 原子替换）。"""
+    import xarray as xr
+
+    path = Path(path)
+    tmp = path.with_suffix(path.suffix + ".part")
+    before: dict[str, str] = {}
+    try:
+        with xr.open_dataset(path, chunks={}) as ds:
+            before = {name: str(var.dtype) for name, var in ds.data_vars.items()}
+            out = ds.copy()
+            for name in list(out.data_vars):
+                out[name] = out[name].astype(container)
+            # chunks={} 让 dask 按单变量块流式写：归一不引入整份驻留（2 GB 的
+            # 真彩色 10m 产物也走这条；与 c15 的 .part + 原子替换同款发布语义）。
+            out.to_netcdf(tmp)
+        tmp.replace(path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    return {"changed": True, "kind": "nc", "from": before, "to": container}
+
+
+def _apply_container_to_geotiff(job: Job, path: Path, spec: ArtifactSpec) -> dict | None:
+    """
+    下载/合并后的 GeoTIFF 按契约落容器（c18 容器契约）。
+
+    写盘前先做一次**量纲自证**（有界采样）：容器装不下这份数据就当场报错，
+    不留下一份被静默量化/截断的产物。容器一致时短路（不重写）。
+    """
+    want = _container.resolve_container(spec)
+    _container.guard_container_capacity(
+        _container.read_bounded_sample(path, block_rows=int(CONTAINER_GUARD_ROWS)),
+        want, context=f"{path.name}:",
+    )
+    info = _container.rewrite_geotiff_container(path, want)
+    if info.get("changed"):
+        job.progress("容器契约落盘", 94,
+                     f"{path.name}: 容器 {info.get('from')} → {want}")
+    return info
+
+
+def _normalize_nodata(job: Job, path: Path, *, cache_hit: bool = False,
+                      spec: ArtifactSpec | None = None) -> dict | None:
+    """
+    nodata 归一 → NaN（C15 A4），带**本地瞬时错误重试**；随后按契约归容器（c18）。
 
     刚写下的栅格可能被 AV / 索引扫描短暂锁住（GDAL “Read failed”，实测 2/6 次）；
     `cache_hit=True`（复用既有产物）时最终失败只报进度、不抛 —— 归一失败不该挡住复用；
     下载路径（`cache_hit=False`）则抛出 —— 不能静默留下非 NaN 语义的产物。
+
+    `spec` 给了就顺带做**容器归一**（c18）：既有产物容器与契约不符时就地改写并留痕 ——
+    指纹分不出"float64 的旧缓存"与"float32 的新产物"（容器不进指纹），这条是显式处置。
     """
     last: Exception | None = None
     for i in range(max(1, LOCAL_IO_ATTEMPTS)):
         try:
-            return _chunks.normalize_nodata_to_nan(path)
+            info = _chunks.normalize_nodata_to_nan(path)
+            if spec is not None:
+                cinfo = _cast_product_container(job, path, spec, cache_hit=cache_hit)
+                if cinfo and cinfo.get("changed"):
+                    job.progress("既有产物容器归一", None,
+                                 f"{path.name}: 容器 {cinfo.get('from')} → "
+                                 f"{cinfo.get('to')}（按 container_dtype 契约）")
+            return info
         except Exception as e:                 # noqa: BLE001 — 瞬时锁 / GDAL 读错误
             last = e
             if i + 1 < max(1, LOCAL_IO_ATTEMPTS):
@@ -255,14 +355,14 @@ def _normalize_nodata(job: Job, path: Path, *, cache_hit: bool = False) -> dict 
 
 def _reuse_cached_raster(job: Job, path: Path) -> None:
     """
-    复用既有栅格前的 C15 A4 检查：nodata 语义必须是 NaN。
+    复用既有栅格前的 C15 A4 检查：nodata 语义必须是 NaN；并按 c18 容器契约归容器。
 
     历史产物是 GEE 原始下载，nodata 为 `-inf`（float32）/ `0.0`（float64）/
     整数哨兵；直接复用会让同一 spec 的 GeoTIFF 与 NetCDF 掩膜语义分歧
     （A4 要求两边都是 NaN、masked read 一致）。这里就地把既有产物归一
     （同目录 .part + 原子替换）—— 失败只报进度、不挡住复用。
     """
-    info = _normalize_nodata(job, path, cache_hit=True)
+    info = _normalize_nodata(job, path, cache_hit=True, spec=job.spec)
     if info and info.get("changed"):
         job.progress("既有产物 nodata 归一", None,
                      f"{path.name}: nodata {info.get('nodata')} → NaN（{info.get('dtype')}）")
@@ -884,6 +984,9 @@ def _fetch_tif(
         # 在 .part 上做，rename 即“发布”。
         _chunks.collapse_mask_bands(tmp, n_bands_est)
         tmp.replace(out_path)
+        # c18 容器契约：新产物按 container_dtype 落容器（写盘后立刻自证；
+        # 非法组合由 container.resolve/guard 在写盘前拦下）。
+        _apply_container_to_geotiff(job, out_path, spec)
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
@@ -935,7 +1038,8 @@ def _download_stack_to(job: Job, out_path: Path, grid: Grid) -> Path:
             period_files.append(pf)
 
         job.progress("本地合并", 85, f"{len(period_files)} 期 → 单张 {len(periods)}×{n_bands} 波段")
-        _merge_stack(period_files, tmp_final, grid, periods, list(spec.bands) or None)
+        _merge_stack(period_files, tmp_final, grid, periods, list(spec.bands) or None,
+                     container=_container.resolve_container(spec))
         tmp_final.replace(out_path)
     except BaseException:
         tmp_final.unlink(missing_ok=True)
@@ -955,8 +1059,13 @@ def _merge_stack(
     grid: Grid,
     periods: list,
     bands: list[str] | None,
+    *,
+    container: str | None = None,
 ) -> None:
-    """逐期 GeoTIFF → 单张期主序 N×B GeoTIFF（rasterio + Affine，字段名显式）。"""
+    """逐期 GeoTIFF → 单张期主序 N×B GeoTIFF（rasterio + Affine，字段名显式）。
+
+    `container` 给了就用它当落盘容器（c18 容器契约）；缺省沿用首期容器的历史行为。
+    """
     import rasterio
     from rasterio.transform import Affine
 
@@ -964,7 +1073,8 @@ def _merge_stack(
     n_bands = len(bands) if bands else 1
 
     with rasterio.open(period_files[0]) as p0:
-        dtype = p0.dtypes[0]
+        src_dtype = p0.dtypes[0]
+        dtype = container or src_dtype
         # C15 A4：期文件已由 _fetch_tif 归一为 NaN；这里强制 NaN，
         # 防止历史期产物残留 -inf / 0 哨兵渗进堆叠产物
         nodata = float("nan")
@@ -993,14 +1103,16 @@ def _merge_stack(
                         f"期文件 {pf.name} 网格 {src.width}×{src.height} 与 "
                         f"{grid.width}×{grid.height} 不符 —— GEE 未按请求网格返回。"
                     )
-                if src.dtypes[0] != dtype:
+                if src.dtypes[0] != src_dtype:
                     raise RuntimeError(
-                        f"期文件 {pf.name} dtype {src.dtypes[0]} 与首期 {dtype} 不一致 —— "
+                        f"期文件 {pf.name} dtype {src.dtypes[0]} 与首期 {src_dtype} 不一致 —— "
                         "GEE 逐期返回类型漂移，拒绝合并以免堆叠错位。"
                     )
                 for j in range(1, src.count + 1):
                     k += 1
-                    dst_ds.write(src.read(j), k)
+                    block = src.read(j)
+                    _container.guard_container_capacity(block, dtype, context=f"{pf.name}:")
+                    dst_ds.write(block.astype(dtype, copy=False), k)
                     if k <= len(descriptions):
                         dst_ds.set_band_description(k, descriptions[k - 1])
 
@@ -1064,6 +1176,25 @@ def _describe_raster(p: Path) -> dict:
 # 出口 B：数组
 # ---------------------------------------------------------------------------
 
+def _write_ncdf_with_container(arr, tmp: Path, spec: ArtifactSpec) -> None:
+    """
+    把 xarray 数据集按容器契约写成 NetCDF（c18）。
+
+    不用 `arr.to_netcdf` 一把梭，而是先把数据变量 cast 到契约容器再写 ——
+    NetCDF4 的自动 dtype 转换在带 `scale_factor` 属性时会把值重新缩放，
+    显式 cast 后写可保持"只改容器、不改值"的语义（与 GeoTIFF 侧同款自证）。
+    """
+    container = _container.resolve_container(spec)
+    out = arr.copy()
+    for name in list(out.data_vars):
+        block = out[name].values
+        _container.guard_container_capacity(
+            block, container, context=f"{getattr(spec, 'slug', 'spec')}:{name}:",
+        )
+        out[name] = out[name].astype(container)
+    out.to_netcdf(tmp)
+
+
 def emit_array(job: Job) -> dict:
     """
     xee 把 ee.Image / ee.ImageCollection 变成惰性 xarray，Dask 分块拉像素。
@@ -1087,6 +1218,11 @@ def emit_array(job: Job) -> dict:
     if out.exists() and out.stat().st_size > 4096:
         # 产物缓存：.nc 与 .tif 一样是指纹化的确定性产物（xee computePixels
         # 对同图同参逐位一致），命中即复用 —— 与 _ensure_raster 同一哲学。
+        cinfo = _cast_product_container(job, out, spec, cache_hit=True)
+        if cinfo and cinfo.get("changed"):
+            job.progress("既有产物容器归一", None,
+                         f"{out.name}: 容器 {cinfo.get('from')} → {cinfo.get('to')}"
+                         "（按 container_dtype 契约）")
         job.progress("复用已有数组产物", 80,
                      f"{out.name} ({out.stat().st_size/1048576:.1f} MB)")
         with xr.open_dataset(out) as _ds:
@@ -1101,8 +1237,8 @@ def emit_array(job: Job) -> dict:
                 tmp.replace(out)
             else:
                 arr = _compute_array_via_xee(job, spec, grid, periods)
-                job.progress("落盘", 80, "NetCDF")
-                arr.to_netcdf(tmp)
+                job.progress("落盘", 80, f"NetCDF（容器 {_container.resolve_container(spec)}）")
+                _write_ncdf_with_container(arr, tmp, spec)
                 tmp.replace(out)
         except BaseException:
             tmp.unlink(missing_ok=True)
@@ -1304,6 +1440,8 @@ def _compute_array_chunked_to_ncdf(
         h_total = int(ds.sizes["y"])
         w_total = int(ds.sizes["x"])
         bands = [str(b) for b in ds.data_vars]
+        # c18 容器契约：分块路径的变量容器也按契约落（原硬编码 float32）
+        container = _container.resolve_container(spec)
         t_blk = io_chunks["index"]
         h_blk = io_chunks["height"]
         w_blk = io_chunks["width"]
@@ -1332,8 +1470,8 @@ def _compute_array_chunked_to_ncdf(
             for b in bands:
                 src = ds[b]
                 bv = f.createVariable(
-                    b, np.float32, ("time", "y", "x"),
-                    fill_value=np.float32(np.nan),
+                    b, np.dtype(container), ("time", "y", "x"),
+                    fill_value=np.dtype(container).type(np.nan),
                 )
                 for k in src.attrs:
                     try:
@@ -1379,8 +1517,13 @@ def _compute_array_chunked_to_ncdf(
                                     time=slice(t0, t1),
                                     y=slice(y0, y1), x=slice(x0, x1),
                                 ).values
+                                block = np.asarray(block)
+                                _container.guard_container_capacity(
+                                    block, container,
+                                    context=f"{getattr(spec, 'slug', 'spec')}:{b}:",
+                                )
                                 f.variables[b][t0:t1, y0:y1, x0:x1] = np.asarray(
-                                    block, dtype=np.float32,
+                                    block, dtype=np.dtype(container),
                                 )
 
                         _retry(

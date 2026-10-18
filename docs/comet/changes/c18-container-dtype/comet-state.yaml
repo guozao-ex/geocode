@@ -1,0 +1,122 @@
+schema: comet.native.v4
+name: c18-container-dtype
+language: zh-CN
+phase: build
+status: active
+state_version: 5
+brief: brief.md
+document_constraints_version: 3
+shape_confirmation_hash: dc65784ad12cca8d9f2eb07dcfdf4bb839a137307a767e1f9fff804a1c8a1af7
+spec_changes:
+  - capability: container-dtype
+    operation: create
+    source: specs/container-dtype/spec.md
+workspace:
+  isolation: worktree
+  change_branch: comet/c18-container-dtype
+  target_branch: main
+  finish: null
+loop:
+  stage: building
+  goal_cycle: 2
+  iteration: 1
+  attempt: 0
+  retry_epoch: 0
+  failed_iteration_count: 0
+  no_progress_count: 0
+  execution_failure_count: 0
+  previous_unresolved_ids: []
+  next_action: submit-builder-candidate
+acceptance:
+  - id: A1
+    source: brief.md
+    text: "A1: 同一 spec 的 `emit_file`（GeoTIFF）与 `emit_array`（NetCDF）容器 dtype 一致，且等于按
+      Q1 选定 语义推导出的期望值（例如 `container_dtype=float32` 时两边都是 float32）。"
+    result: pending
+    reason: null
+  - id: A2
+    source: brief.md
+    text: 'A2: 量纲守卫生效：对"数据为 0–1 小数、却声明整数容器"的 spec，产物不得被静默量化 ——
+      必须报出可读错误（或按选定语义降级为浮点并明确告警），且有离线用例覆盖该判定。'
+    result: pending
+    reason: null
+  - id: A3
+    source: brief.md
+    text: "A3: 既有 P0 样本的像素值不因本 change 变化（数值域校验：min/max/mean 与改动前一致， 容差 ≤ 1e-6）；若按 Q2
+      选择 bump + 预注册，则金指纹切换有预注册记录且旧值仍可复现 （版本号替换回 N 即复现旧指纹）。实测必须打在 **S2 真彩色**那条（现状
+      GeoTIFF float64 → 契约 float32 才是真验证）；DEM（现状已 float32）与 WorldCover（同样
+      float32）只能作旁证，不得单独充数。"
+    result: pending
+    reason: null
+  - id: A4
+    source: brief.md
+    text: 'A4: 文档收敛：README §9.7 的"已知边界"条目不再声称 dtype 不可控，改为写清当前语义与取值规则； dev doc
+      的对应章节同步。'
+    result: pending
+    reason: null
+  - id: A5
+    source: brief.md
+    text: "A5: 回归：离线用例全绿（含容器 dtype 与量纲守卫的新用例）、`uvx ruff@0.17.0 check` 零告警、
+      `tests/verify_all.py` 离线层 RUN 全 PASS。"
+    result: pending
+    reason: null
+  - id: A6
+    source: brief.md
+    text: 'A6: 附条件 1 —— 旧产物容器不一致被**显式处置**：缓存命中时既有产物的容器 dtype 与当前契约不符 （如 S2 真彩色 .tif
+      为 float64、契约 float32）会走一次性归一（沿用 `normalize_nodata_to_nan` 的 .part +
+      原子替换先例）并留下可读进度记录；不接受"默认无视"。旧缓存不被删除，也不另造基线。'
+    result: pending
+    reason: null
+  - id: A7
+    source: brief.md
+    text: "A7: 附条件 3 —— 判例写进文档：`docs/README.md` §11 红线 3 下补注记，写明「容器精度截断
+      （float64→float32 等）若数值域在 1e-6 容差内不变，不视为改变像素输出；nodata/掩膜语义的归一化 改写同理（c15
+      判例）」。该文件是 gitignored 本地件，以**待执行差异清单**形式交付（四列：现状 / 改为 / 依据 /
+      回退），由归档轮在主工作区就地执行。"
+    result: pending
+    reason: null
+  - id: A8
+    source: brief.md
+    text: "A8: 回归基线按同步 main 后的口径留档：全量离线用例 ≥ 352 条全绿（不得低于 352）， 并附 change 开始时的实测条数。"
+    result: pending
+    reason: null
+  - id: A9
+    source: brief.md
+    text: "A9: `container_dtype` 序列化按红线 8：仅在值 ≠ 默认 `float32` 时落键；旧 spec（未写该字段）
+      指纹逐字节不变，金指纹 `b91c09c9c6451c16` / `c9243efd40318c85` 不回退。"
+    result: pending
+    reason: null
+  - id: A10
+    source: brief.md
+    text: "A10: 附条件 2 —— `collapse_mask_bands`（`gis/export_chunks.py`）补齐整数 value
+      band → float32 提升，与 `normalize_nodata_to_nan` 口径统一：对整数容器 + nodata=NaN
+      的组合不再硬失败， 且有离线用例覆盖该判定（当前实现会抛 rasterio 越界 ValueError）。"
+    result: pending
+    reason: null
+builder_handoff: null
+blockers: []
+verification: null
+history:
+  - goal_cycle: 1
+    iteration: 0
+    attempt: 0
+    outcome: recovery
+    unresolved_ids: []
+    summary:
+      text: Native confirmed acceptance criteria changed
+      truncated: false
+    completed_at: 2026-10-18T07:00:33.649Z
+history_overflow:
+  dropped_entries: 0
+  first_dropped_at: null
+  last_dropped_at: null
+  outcome_counts:
+    pass: 0
+    fail: 0
+    blocked: 0
+    execution-error: 0
+    recovery: 0
+verification_result: pending
+verification_report: null
+archived: false
+created_at: 2026-10-11T13:02:54.544Z

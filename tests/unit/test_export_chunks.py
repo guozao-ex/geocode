@@ -333,6 +333,38 @@ class TestMaskBands(unittest.TestCase):
             self.assertFalse(any(x.name.endswith(".part")
                                  for x in Path(tmp).iterdir()))
 
+    def test_collapse_promotes_integer_value_band(self):
+        """c18 附条件 2：整数 value band 必须提升为 float32 —— 否则 nodata=nan 越界硬失败。
+
+        c15 记录在案的缺陷路径：`profile.update(nodata=nan)` 配上 int32 容器，rasterio
+        直接抛 "nodata value, nan, is beyond the valid range of its data type, int32"。
+        本用例是**破坏性自证**：先证明该组合在旧实现下必失败，再证明现在被提升且结果正确。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "dl_int.tif"
+            vals = np.array([[3, 0, 5]], dtype=np.int32)
+            masks = np.array([[1, 1, 0]], dtype=np.int32)
+            with rasterio.open(
+                p, "w", driver="GTiff", width=3, height=1, count=2,
+                dtype="int32", crs="EPSG:32650",
+                transform=(10.0, 0.0, 500_000.0, 0.0, -10.0, 4_000_000.0),
+                nodata=-9999,
+            ) as ds:
+                ds.write(vals, 1)
+                ds.write(masks, 2)
+            info = collapse_mask_bands(p, 1)
+            self.assertEqual(info["dtype"], "int32")
+            self.assertEqual(info["out_dtype"], "float32", "整数容器必须提升为 float32")
+            with rasterio.open(p) as ds:
+                self.assertEqual(ds.count, 1)
+                self.assertEqual(list(ds.dtypes), ["float32"])
+                self.assertTrue(math.isnan(ds.nodata))
+                arr = ds.read(1)
+            self.assertEqual(arr[0, 0], 3.0, "掩膜=1 的整数值保留")
+            self.assertTrue(np.isnan(arr[0, 2]), "掩膜=0 → NaN（整数容器装不下，故提升）")
+            self.assertFalse(any(x.name.endswith(".part")
+                                 for x in Path(tmp).iterdir()))
+
     def test_collapse_rejects_wrong_band_count(self):
         """波段数不符要报错，不得静默退回哨兵猜测。"""
         with tempfile.TemporaryDirectory() as tmp:
