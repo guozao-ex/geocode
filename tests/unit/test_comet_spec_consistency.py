@@ -25,7 +25,6 @@ c19-verify-report-drift 走豁免归档后，其归档目录本来就没有 `spe
 import os
 import re
 import pathlib
-import re
 import tempfile
 import unittest
 
